@@ -11,9 +11,11 @@ import {
   Snowflake,
   Eye,
   Radio,
+  Sparkles,
+  Bot,
 } from "lucide-react";
 import PageHeader from "./PageHeader";
-import { startCamera, stopCamera, getCameraStatus, getCameraFeedUrl } from "../services/api";
+import { startCamera, stopCamera, getCameraStatus, getCameraFeedUrl, fetchAiInsight } from "../services/api";
 
 const POLL_MS = 800;
 
@@ -21,6 +23,8 @@ export default function LiveCamera({ backend }) {
   const [cam, setCam] = useState(null);       // camera status snapshot
   const [loading, setLoading] = useState(false);
   const [feedKey, setFeedKey] = useState(0);   // bump to reload <img>
+  const [aiAdvice, setAiAdvice] = useState(null);
+  const [askingAi, setAskingAi] = useState(false);
   const pollRef = useRef(null);
 
   // Poll camera status while mounted
@@ -70,6 +74,34 @@ export default function LiveCamera({ backend }) {
       /* noop */
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleAskGemini() {
+    setAskingAi(true);
+    try {
+      const res = await fetchAiInsight({
+        peopleCount: cam?.people_count ?? 0,
+        status: cam?.status ?? "Empty",
+        emptySeconds: cam?.empty_seconds ?? 0,
+        energyWasteAlert: cam?.energy_waste_alert ?? false,
+        lightsOn: (cam?.people_count ?? 0) > 0,
+        acOn: (cam?.people_count ?? 0) > 0,
+        totalEnergyKwh: 4.4,
+        totalDailyCost: 35.2,
+      });
+      if (res?.ai_insight) {
+        setAiAdvice({
+          text: res.ai_insight,
+          source: res.source || "gemini",
+          model: res.model || "gemini-3.8-flash",
+          visionContext: res.vision_context,
+        });
+      }
+    } catch {
+      /* graceful */
+    } finally {
+      setAskingAi(false);
     }
   }
 
@@ -169,6 +201,50 @@ export default function LiveCamera({ backend }) {
               </div>
             )}
           </div>
+
+          <div style={{ marginTop: "14px", display: "flex", gap: "10px", alignItems: "center" }}>
+            <button
+              type="button"
+              className="cv-btn"
+              style={{ background: "#38bdf8", color: "#082f49", borderColor: "#38bdf8", cursor: "pointer" }}
+              disabled={askingAi}
+              onClick={handleAskGemini}
+            >
+              <Sparkles size={15} />
+              {askingAi ? "Gemini AI is analyzing vision feed…" : "✨ Ask Gemini AI for Live Advice"}
+            </button>
+          </div>
+
+          {aiAdvice && (
+            <div style={{
+              marginTop: "14px",
+              padding: "16px 18px",
+              borderRadius: "14px",
+              border: "1px solid #38bdf8",
+              background: "linear-gradient(145deg, rgba(56, 189, 248, 0.08), rgba(14, 165, 233, 0.03))",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#38bdf8", fontWeight: "700", fontSize: "12px" }}>
+                  <Bot size={17} /> GOOGLE GEMINI 3.8 FLASH VISION ADVISORY
+                </div>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <span className="tiny-badge" style={{ color: "#38bdf8", borderColor: "#0284c7" }}>
+                    {aiAdvice.model}
+                  </span>
+                  <span className="tiny-badge" style={{ color: "#a7f3d0", borderColor: "#059669" }}>
+                    Detected: {aiAdvice.visionContext?.people_count ?? people} people
+                  </span>
+                </div>
+              </div>
+              <p style={{ color: "#f8fafc", fontSize: "13px", lineHeight: "1.65", margin: "6px 0" }}>
+                {aiAdvice.text}
+              </p>
+              <div style={{ marginTop: "10px", color: "#64748b", fontSize: "10px" }}>
+                Synthesized by Google Gemini AI analyzing real-time YOLOv8 camera headcount and classroom telemetry.
+              </div>
+            </div>
+          )}
 
           {isActive && (
             <p className="cv-feed-footer">

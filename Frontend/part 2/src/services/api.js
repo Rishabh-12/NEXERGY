@@ -55,13 +55,20 @@ export function fetchHistoricalData() {
   return request("/historical-data");
 }
 
-export function fetchAiInsight({ totalEnergyKwh, totalDailyCost, peopleCount }) {
+export function fetchAiInsight(params = {}) {
   return request("/generate-insight", {
     method: "POST",
     body: JSON.stringify({
-      total_energy_kwh: totalEnergyKwh,
-      total_daily_cost: totalDailyCost,
-      people_count: peopleCount,
+      total_energy_kwh: params.totalEnergyKwh,
+      total_daily_cost: params.totalDailyCost,
+      people_count: params.peopleCount,
+      status: params.status,
+      empty_seconds: params.emptySeconds,
+      energy_waste_alert: params.energyWasteAlert,
+      lights_on: params.lightsOn,
+      ac_on: params.acOn,
+      ac_setpoint_c: params.setpoint,
+      operating_hours: params.hours,
     }),
   });
 }

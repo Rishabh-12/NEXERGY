@@ -2,6 +2,7 @@
 import cv2
 import time
 import json
+import os
 import threading
 import urllib.request
 from collections import deque
@@ -47,8 +48,8 @@ LINE_X_END = 0.90
 CROSS_COOLDOWN_SECONDS = 1.0
 STALE_TRACK_SECONDS = 3.0
 
-# Existing working backend endpoint.
-BACKEND_URL = "http://10.2.3.115:8000/update-occupancy"
+# Backend endpoint for live CV synchronization.
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000/update-occupancy")
 BACKEND_INTERVAL_SECONDS = 2.0
 
 # Compact display panel.

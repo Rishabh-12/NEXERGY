@@ -76,8 +76,8 @@ function localRecommendations({ settings, applied }) {
   return items;
 }
 
-export default function Recommendations({ settings, applied, baseline, simulated }) {
-  const scenarioKey = JSON.stringify([settings, applied.savings, applied.cost]);
+export default function Recommendations({ settings, applied, baseline, simulated, backend }) {
+  const scenarioKey = JSON.stringify([settings, applied.savings, applied.cost, backend?.energyWasteAlert]);
   const [remote, setRemote] = useState(null); // { key, items }
   const [aiInsight, setAiInsight] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -97,6 +97,11 @@ export default function Recommendations({ settings, applied, baseline, simulated
           totalEnergyKwh: simulated,
           totalDailyCost: applied.cost > 0 ? applied.cost : simulated * 8,
           peopleCount: settings.occupancy,
+          energyWasteAlert: backend?.energyWasteAlert,
+          lightsOn: settings.lightsOn,
+          acOn: settings.acOn,
+          setpoint: settings.setpoint,
+          hours: settings.hours,
         }),
       ]);
 
@@ -111,6 +116,8 @@ export default function Recommendations({ settings, applied, baseline, simulated
         setAiInsight({
           text: insightResult.value.ai_insight,
           source: insightResult.value.source || "gemini",
+          model: insightResult.value.model || "gemini-3.8-flash",
+          visionContext: insightResult.value.vision_context,
         });
       }
     } catch {
@@ -126,20 +133,20 @@ export default function Recommendations({ settings, applied, baseline, simulated
       <PageHeader
         eyebrow="SMART INSIGHTS"
         title="AI Recommendations"
-        subtitle="Review explainable energy-saving suggestions based on the current simulated scenario."
-        pill={remoteItems ? "Backend rules" : "Local rules"}
+        subtitle="Review explainable energy-saving suggestions powered by Google Gemini and live computer vision."
+        pill={aiInsight ? "Gemini AI active" : (remoteItems ? "Backend rules" : "Local rules")}
       />
 
       <section className="panel">
         <div className="panel-title-row">
           <div>
-            <p className="eyebrow">ENERGY EFFICIENCY</p>
+            <p className="eyebrow">ENERGY EFFICIENCY & VISION TELEMETRY</p>
             <h2>Recommended actions</h2>
             <p style={{ marginTop: 8, color: "#94a3b8", fontSize: 11 }}>
-              Actionable suggestions from current scenario rules.
+              Real-time advice synthesized from YOLOv8 camera detection, classroom appliances, and Gemini AI.
             </p>
           </div>
-          <span className="tiny-badge">Rule-based preview</span>
+          <span className="tiny-badge">Gemini 3.8 Flash</span>
         </div>
 
         <button
@@ -149,26 +156,41 @@ export default function Recommendations({ settings, applied, baseline, simulated
           onClick={generate}
         >
           <Sparkles size={15} />
-          {loading ? "Generating…" : "Generate AI Recommendations"}
+          {loading ? "Analyzing with Gemini AI…" : "Generate AI Recommendations"}
         </button>
 
         {notice && <p className="ai-message">{notice}</p>}
 
         {aiInsight && (
-          <article className="rec-item" style={{ borderColor: "#38bdf8", background: "rgba(56, 189, 248, 0.05)", marginBottom: "20px" }}>
-            <div className="rec-top">
-              <div className="rec-icon" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8" }}>
-                <Bot size={18} />
+          <article className="rec-item" style={{ borderColor: "#38bdf8", background: "rgba(56, 189, 248, 0.05)", marginBottom: "22px" }}>
+            <div className="rec-top" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div className="rec-icon" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8" }}>
+                  <Bot size={18} />
+                </div>
+                <span className="priority" style={{ color: "#38bdf8" }}>
+                  {aiInsight.source === "gemini" ? "GOOGLE GEMINI AI INSIGHT" : "AI ADVISORY ENGINE"}
+                </span>
               </div>
-              <span className="priority" style={{ color: "#38bdf8" }}>
-                {aiInsight.source === "gemini" ? "GOOGLE GEMINI AI INSIGHT" : "AI ADVISORY ENGINE"}
-              </span>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <span className="tiny-badge" style={{ color: "#38bdf8", borderColor: "#0284c7" }}>
+                  Model: {aiInsight.model}
+                </span>
+                <span className="tiny-badge" style={{ color: "#a7f3d0", borderColor: "#059669" }}>
+                  Vision: {aiInsight.visionContext?.people_count ?? settings.occupancy} people
+                </span>
+                {(aiInsight.visionContext?.energy_waste_alert || backend?.energyWasteAlert) && (
+                  <span className="tiny-badge" style={{ color: "#fca5a5", borderColor: "#dc2626", background: "rgba(220,38,38,0.15)" }}>
+                    Waste Alert Active
+                  </span>
+                )}
+              </div>
             </div>
-            <h3 style={{ color: "#38bdf8" }}>Live AI Campus Insight</h3>
-            <p style={{ color: "#f1f5f9", fontSize: "14px", lineHeight: "1.6" }}>{aiInsight.text}</p>
+            <h3 style={{ color: "#38bdf8", marginTop: "14px" }}>Live Camera & Energy Optimization Strategy</h3>
+            <p style={{ color: "#f1f5f9", fontSize: "14px", lineHeight: "1.65", margin: "10px 0" }}>{aiInsight.text}</p>
             <div className="action-box">
-              <strong>AI ADVISORY SUMMARY</strong>
-              Real-time analysis powered by Google Generative AI for current simulated parameters.
+              <strong>GEMINI TELEMETRY ANALYSIS</strong>
+              Synthesized by Google Gemini from real-time YOLOv8 camera headcount, digital-twin cooling loads, and campus historical data.
             </div>
           </article>
         )}

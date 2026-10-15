@@ -181,6 +181,7 @@ export default function App() {
             applied={applied}
             baseline={baselineEnergy.energyKwh}
             simulated={simulatedEnergy.energyKwh}
+            backend={backend}
           />
         )}
       </main>

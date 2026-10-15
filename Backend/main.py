@@ -1,6 +1,7 @@
 import os
 import csv
 from typing import Optional, List
+import requests
 import pandas as pd
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -8,26 +9,50 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from camera import camera_state, start_camera, stop_camera, mjpeg_generator
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 app = FastAPI(title="NexEnergy API - Smart Campus Energy Optimizer")
 
-# Gemini AI configuration
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "PASTE_YOUR_API_KEY_HERE")
-gemini_model = None
+# Gemini AI configuration via environment variable (.env)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+def call_gemini(prompt: str) -> Optional[dict]:
+    """Call Google Gemini API using REST with fast multi-model fallback."""
+    if not GEMINI_API_KEY:
+        return None
+
+    # Priority models supported on current Gemini API
+    models = [
+        os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+        "gemini-3.5-flash",
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
+    ]
+    for model_name in models:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+            payload = {"contents": [{"parts": [{"text": prompt}]}]}
+            res = requests.post(url, json=payload, timeout=6)
+            if res.status_code == 200:
+                data = res.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                if text:
+                    return {"text": text, "model": model_name}
+        except Exception:
+            continue
+    return None
+
+gemini_available = bool(GEMINI_API_KEY)
 try:
     import google.generativeai as genai
-    if GEMINI_API_KEY and GEMINI_API_KEY != "PASTE_YOUR_API_KEY_HERE":
+    if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
-        model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-        gemini_model = genai.GenerativeModel(model_name)
-    else:
-        # Try default configuration if available in environment
-        try:
-            genai.configure(api_key="PASTE_YOUR_API_KEY_HERE")
-            gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-        except Exception:
-            gemini_model = None
 except Exception:
-    gemini_model = None
+    genai = None
 
 # CORS middleware for Frontend dashboard
 app.add_middleware(
@@ -70,9 +95,16 @@ class SimulationAppliance(BaseModel):
     simulated_hours: float
 
 class InsightRequest(BaseModel):
-    total_energy_kwh: float
-    total_daily_cost: float
-    people_count: int
+    total_energy_kwh: Optional[float] = None
+    total_daily_cost: Optional[float] = None
+    people_count: Optional[int] = None
+    status: Optional[str] = None
+    empty_seconds: Optional[int] = None
+    energy_waste_alert: Optional[bool] = None
+    lights_on: Optional[bool] = None
+    ac_on: Optional[bool] = None
+    ac_setpoint_c: Optional[float] = None
+    operating_hours: Optional[float] = None
 
 class RecommendationRequest(BaseModel):
     occupancy: int = 0
@@ -177,44 +209,112 @@ def simulate_savings(appliances: List[SimulationAppliance]):
         "carbon_saved_kg": round(carbon_saved_kg, 2)
     }
 
-# 4. Generative AI Insight (Google Gemini with intelligent fallback)
+# 4. Generative AI Insight (Google Gemini with Computer Vision & Telemetry Analysis)
 @app.post("/generate-insight")
 def generate_insight(data: InsightRequest):
-    prompt = f"""
-    You are an AI energy optimizer for a smart campus. 
-    Current status: There are {data.people_count} people in the room. 
-    The current daily energy usage is {data.total_energy_kwh} kWh, costing ₹{data.total_daily_cost}.
-    
-    Give a short, friendly, 2-sentence recommendation to the campus admin on what to do next. 
-    If the room is empty, tell them to turn things off. If it's occupied, tell them it's optimized.
-    """
+    # Resolve live telemetry from payload or live camera state
+    if camera_state.active:
+        cam_snap = camera_state.snapshot()
+        people = data.people_count if data.people_count is not None else cam_snap["people_count"]
+        waste_alert = data.energy_waste_alert if data.energy_waste_alert is not None else cam_snap["energy_waste_alert"]
+        empty_sec = data.empty_seconds if data.empty_seconds is not None else cam_snap["empty_seconds"]
+        room_status = cam_snap["status"]
+    else:
+        people = data.people_count if data.people_count is not None else room_state.get("people_count", 0)
+        waste_alert = data.energy_waste_alert if data.energy_waste_alert is not None else room_state.get("energy_waste_alert", False)
+        empty_sec = data.empty_seconds if data.empty_seconds is not None else 0
+        room_status = "Occupied" if people > 0 else "Empty"
 
-    if gemini_model:
-        try:
-            response = gemini_model.generate_content(prompt)
-            if response and response.text:
-                return {
-                    "source": "gemini",
-                    "ai_insight": response.text.strip()
-                }
-        except Exception:
-            pass
+    energy_kwh = data.total_energy_kwh if data.total_energy_kwh is not None else 4.4
+    cost = data.total_daily_cost if data.total_daily_cost is not None else round(energy_kwh * 8, 2)
+    ac_status = data.ac_on if data.ac_on is not None else room_state.get("AC", True)
+    lights_status = data.lights_on if data.lights_on is not None else (people > 0)
+    fan_status = room_state.get("Ceiling Fan", True)
 
-    # Intelligent fallback when Gemini API key is not configured or offline
-    if data.people_count == 0:
-        insight = (
-            f"Classroom is vacant while estimated daily usage is {data.total_energy_kwh:.2f} kWh (₹{data.total_daily_cost:.2f}). "
-            "Turn off high-power cooling and lighting immediately to avoid standby waste."
+    # Read historical benchmarks
+    hist_avg_kwh = 44.3
+    hist_avg_cost = 354.5
+    try:
+        csv_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "historical_data.csv")
+        if os.path.exists(csv_file):
+            df = pd.read_csv(csv_file)
+            if not df.empty and "energy_kwh" in df:
+                hist_avg_kwh = float(df["energy_kwh"].mean())
+                hist_avg_cost = float(df["cost_rupees"].mean())
+    except Exception:
+        pass
+
+    prompt = f"""You are NexEnergy Gemini AI, a smart campus energy management advisor.
+Analyze the following real-time computer vision detection and classroom telemetry:
+
+[LIVE COMPUTER VISION DATA]
+- Location: Classroom A-101
+- People Detected: {people} {'person' if people == 1 else 'people'}
+- Room Status: {room_status}
+- Empty Room Duration: {empty_sec} seconds
+- Energy Waste Alert: {'ACTIVE (appliances running in an empty classroom!)' if waste_alert else 'NORMAL'}
+
+[APPLIANCES & TELEMETRY]
+- Air Conditioning: {'ON' if ac_status else 'OFF'}{f' @ {data.ac_setpoint_c}°C' if data.ac_setpoint_c else ''}
+- Lighting: {'ON' if lights_status else 'OFF'}
+- Ceiling Fan: {'ON' if fan_status else 'OFF'}
+- Simulated Daily Energy: {energy_kwh:.2f} kWh
+- Simulated Daily Cost: ₹{cost:.2f}
+- Campus Historical Average (Past 5 days): {hist_avg_kwh:.1f} kWh/day (₹{hist_avg_cost:.1f}/day)
+
+Based on this computer vision detection and electrical telemetry:
+Provide a concise, direct, and actionable 2-sentence energy recommendation for the facility manager.
+If an energy waste alert is active or the room is empty while appliances run, give a clear urgent directive to power down specific idle equipment. If occupied, provide optimal setpoint and lighting guidance for student comfort and power savings."""
+
+    # Call Gemini AI with real-time computer vision and electrical telemetry
+    gemini_res = call_gemini(prompt)
+    if gemini_res:
+        return {
+            "source": "gemini",
+            "model": f"Google Gemini ({gemini_res['model']})",
+            "ai_insight": gemini_res["text"],
+            "vision_context": {
+                "people_count": people,
+                "room_status": room_status,
+                "energy_waste_alert": waste_alert,
+                "empty_seconds": empty_sec,
+                "lights_on": lights_status,
+                "ac_on": ac_status,
+                "energy_kwh": energy_kwh,
+                "cost_rupees": cost,
+            }
+        }
+
+    # Intelligent data-driven fallback when API rate limit / quota is reached
+    if waste_alert or (people == 0 and (ac_status or lights_status)):
+        fallback = (
+            f"AI Computer Vision Alert: Classroom A-101 is vacant ({empty_sec}s empty) but cooling and lighting are still active. "
+            f"Immediately power down the AC and lighting to eliminate unnecessary ₹{cost:.2f}/day standby waste."
+        )
+    elif people > 0:
+        fallback = (
+            f"AI Vision detected {people} occupants in Classroom A-101 (current load: {energy_kwh:.2f} kWh, ₹{cost:.2f}/day). "
+            f"Maintain cooling setpoint between 24–26°C to balance student comfort and reduce campus power draw by up to 15%."
         )
     else:
-        insight = (
-            f"Classroom has {data.people_count} active occupants with daily consumption around {data.total_energy_kwh:.2f} kWh (₹{data.total_daily_cost:.2f}). "
-            "Power levels are well-balanced; keep temperature at 24°C to sustain optimal energy efficiency."
+        fallback = (
+            f"Classroom A-101 is vacant and operating within optimal baseline efficiency ({energy_kwh:.2f} kWh, ₹{cost:.2f}/day). "
+            "Continue automated occupancy scheduling."
         )
 
     return {
         "source": "smart-engine",
-        "ai_insight": insight
+        "ai_insight": fallback,
+        "vision_context": {
+            "people_count": people,
+            "room_status": room_status,
+            "energy_waste_alert": waste_alert,
+            "empty_seconds": empty_sec,
+            "lights_on": lights_status,
+            "ac_on": ac_status,
+            "energy_kwh": energy_kwh,
+            "cost_rupees": cost,
+        }
     }
 
 # 5. Historical Energy Records
