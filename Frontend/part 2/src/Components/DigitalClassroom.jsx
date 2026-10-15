@@ -1,4 +1,4 @@
-import { Building2, Users, Lightbulb, Snowflake, Info, Minus, Plus, AlertTriangle } from "lucide-react";
+import { Building2, Users, Lightbulb, Snowflake, Info, Minus, Plus, AlertTriangle, Camera } from "lucide-react";
 import PageHeader from "./PageHeader";
 import { CLASSROOM_CAPACITY } from "../services/energyCalculations";
 
@@ -8,6 +8,7 @@ export default function DigitalClassroom({
   onOccupancyChange,
   onToggleLights,
   onToggleAc,
+  onNavigate,
 }) {
   const { occupancy, lightsOn, acOn } = settings;
   const isWasteAlert = Boolean(backend?.energyWasteAlert);
@@ -72,6 +73,28 @@ export default function DigitalClassroom({
               </p>
               {backend.status === "online" && backend.message && (
                 <p className="backend-line">Backend: {backend.message}</p>
+              )}
+              {onNavigate && (
+                <button
+                  type="button"
+                  style={{
+                    marginTop: "10px",
+                    padding: "7px 12px",
+                    fontSize: "11px",
+                    fontWeight: "600",
+                    color: "#052e26",
+                    background: "#6ee7b7",
+                    border: "none",
+                    borderRadius: "7px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                  onClick={() => onNavigate("camera")}
+                >
+                  <Camera size={13} /> Open Live Camera Feed
+                </button>
               )}
             </div>
           </div>

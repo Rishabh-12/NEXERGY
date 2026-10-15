@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./layout/Sidebar";
 import Dashboard from "./Components/Dashboard";
 import DigitalClassroom from "./Components/DigitalClassroom";
+import LiveCamera from "./Components/LiveCamera";
 import SimulationPanel from "./Components/simulationPanel";
 import Recommendations from "./Components/Recommendations";
 import {
@@ -154,7 +155,12 @@ export default function App() {
             onOccupancyChange={changeOccupancy}
             onToggleLights={() => updateSettings({ lightsOn: !settings.lightsOn })}
             onToggleAc={() => updateSettings({ acOn: !settings.acOn })}
+            onNavigate={setPage}
           />
+        )}
+
+        {page === "camera" && (
+          <LiveCamera backend={backend} />
         )}
 
         {page === "simulator" && (

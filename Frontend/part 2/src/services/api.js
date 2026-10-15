@@ -66,3 +66,21 @@ export function fetchAiInsight({ totalEnergyKwh, totalDailyCost, peopleCount }) 
   });
 }
 
+// --- Camera / Computer Vision ---
+
+export function startCamera() {
+  return request("/camera/start", { method: "POST" });
+}
+
+export function stopCamera() {
+  return request("/camera/stop", { method: "POST" });
+}
+
+export function getCameraStatus() {
+  return request("/camera/status");
+}
+
+/** Returns the full URL for the MJPEG stream (use as <img src={...}>). */
+export function getCameraFeedUrl() {
+  return `${API_URL}/camera/feed`;
+}

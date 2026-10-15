@@ -3,8 +3,10 @@ import csv
 from typing import Optional, List
 import pandas as pd
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from camera import camera_state, start_camera, stop_camera, mjpeg_generator
 
 app = FastAPI(title="NexEnergy API - Smart Campus Energy Optimizer")
 
@@ -308,3 +310,46 @@ def recommendations(data: RecommendationRequest):
         })
 
     return {"source": "rules", "recommendations": items}
+
+# ---------------------------------------------------------------------------
+# 7. Live Computer-Vision Camera Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/camera/start")
+def api_start_camera():
+    """Start the YOLOv8 webcam detection thread."""
+    result = start_camera()
+    return result
+
+@app.post("/camera/stop")
+def api_stop_camera():
+    """Stop the webcam detection thread."""
+    result = stop_camera()
+    return result
+
+@app.get("/camera/status")
+def api_camera_status():
+    """Return current camera detection state (people count, alerts, FPS, etc.)."""
+    snap = camera_state.snapshot()
+    # Also sync the live detection into room_state so the rest of the app
+    # picks it up automatically via /room-state polling.
+    if snap["active"]:
+        room_state["people_count"] = snap["people_count"]
+        room_state["energy_waste_alert"] = snap["energy_waste_alert"]
+        if snap["people_count"] == 0:
+            room_state["AC"] = False
+            room_state["Ceiling Fan"] = False
+        else:
+            room_state["AC"] = True
+            room_state["Ceiling Fan"] = True
+    return snap
+
+@app.get("/camera/feed")
+def api_video_feed():
+    """MJPEG video stream — embed as <img src="/camera/feed"> in the browser."""
+    if not camera_state.active:
+        return {"error": "Camera is not active. POST /camera/start first."}
+    return StreamingResponse(
+        mjpeg_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )

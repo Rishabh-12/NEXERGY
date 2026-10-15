@@ -5,11 +5,13 @@ import {
   Sparkles,
   Zap,
   Leaf,
+  Camera,
 } from "lucide-react";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "classroom", label: "Digital Classroom", icon: Building2 },
+  { id: "camera", label: "Live AI Camera", icon: Camera },
   { id: "simulator", label: "Energy Simulator", icon: SlidersHorizontal },
   { id: "recommendations", label: "AI Recommendations", icon: Sparkles },
 ];
