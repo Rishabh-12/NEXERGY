@@ -6,11 +6,13 @@ import {
   Zap,
   Leaf,
   Camera,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 const navItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "classroom", label: "Digital Classroom", icon: Building2 },
+  { id: "twin", label: "Digital Twin", icon: Building2 },
   { id: "camera", label: "Live AI Camera", icon: Camera },
   { id: "simulator", label: "Energy Simulator", icon: SlidersHorizontal },
   { id: "recommendations", label: "AI Recommendations", icon: Sparkles },
@@ -22,7 +24,7 @@ const statusText = {
   offline: "Backend offline · local estimates",
 };
 
-export default function Sidebar({ activePage, onNavigate, backendStatus }) {
+export default function Sidebar({ activePage, onNavigate, backendStatus, theme = "light", onToggleTheme }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -35,6 +37,9 @@ export default function Sidebar({ activePage, onNavigate, backendStatus }) {
           </h2>
           <p>ENERGY OPTIMIZER</p>
         </div>
+        <button className="theme-toggle" type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} aria-pressed={theme === "dark"} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
+          {theme === "dark" ? <Sun size={17}/> : <Moon size={17}/>}
+        </button>
       </div>
 
       <p className="nav-heading">WORKSPACE</p>

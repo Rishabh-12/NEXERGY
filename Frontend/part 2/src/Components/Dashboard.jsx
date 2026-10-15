@@ -10,17 +10,17 @@ import {
   AlertTriangle,
   History,
 } from "lucide-react";
-import PageHeader from "./PageHeader";
 import { fetchHistoricalData } from "../services/api";
+import ArchitecturalJourney from "./ArchitecturalJourney";
+import CampusOverview from "./CampusOverview";
+import EventTimeline from "./EventTimeline";
 
-export default function Dashboard({ settings, applied, baseline, onNavigate, backend }) {
+export default function Dashboard({ settings, applied, baseline, onNavigate, backend, events }) {
   const [history, setHistory] = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function loadHistory() {
-      setHistoryLoading(true);
       try {
         const data = await fetchHistoricalData();
         if (!cancelled && Array.isArray(data)) {
@@ -28,8 +28,6 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
         }
       } catch {
         // graceful fallback
-      } finally {
-        if (!cancelled) setHistoryLoading(false);
       }
     }
     loadHistory();
@@ -77,11 +75,10 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
 
   return (
     <section className="page active">
-      <PageHeader
-        eyebrow="CAMPUS OVERVIEW"
-        title="Good energy starts here."
-        subtitle="Monitor classroom conditions and explore energy-saving opportunities."
-      />
+      <ArchitecturalJourney settings={settings} backend={backend} applied={applied} onNavigate={onNavigate} />
+
+      <section className="operations-overview">
+        <div className="operations-heading"><div><p className="eyebrow">OPERATIONS / ROOM A-101</p><h2>One clear view of today.</h2><p>Live room state where connected; estimates where measured data is unavailable.</p></div><span className={`status-pill ${backend?.status || "checking"}`}><span className="status-dot"/>{backend?.status === "online" ? "Backend connected" : backend?.status === "offline" ? "Offline · local estimates" : "Connecting"}</span></div>
 
       {isWasteAlert && (
         <div style={{
@@ -99,7 +96,7 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
         }}>
           <AlertTriangle size={20} color="#ef4444" />
           <span>
-            <strong style={{ color: "#ef4444" }}>AI WASTE ALERT:</strong> Empty room detected while appliances remain turned ON! Check the Digital Classroom or turn off equipment.
+            <strong style={{ color: "#ef4444" }}>POTENTIAL ENERGY WASTE:</strong> The backend reports an empty room while appliances remain on. Review the Digital Twin controls.
           </span>
         </div>
       )}
@@ -158,9 +155,9 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
           <button
             type="button"
             className="primary action"
-            onClick={() => onNavigate("classroom")}
+            onClick={() => onNavigate("twin")}
           >
-            Open Digital Classroom <ArrowUpRight size={16} />
+            Open Digital Twin <ArrowUpRight size={16} />
           </button>
         </section>
 
@@ -188,6 +185,12 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
             Open Energy Simulator <ArrowUpRight size={16} />
           </button>
         </section>
+      </div>
+      </section>
+
+      <div className="dashboard-lower-grid">
+        <CampusOverview backend={backend} settings={settings} onNavigate={onNavigate}/>
+        <EventTimeline events={events}/>
       </div>
 
       {history.length > 0 && (
@@ -230,11 +233,16 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
         </section>
       )}
 
-      <p className="footnote">
+      <p className="footnote dashboard-footnote">
         Energy figures are illustrative estimates based on assumed equipment ratings.
         Occupancy and equipment status are demo values until connected to live
         detection and campus data.
       </p>
+      <footer className="nex-footer">
+        <div className="footer-overline">NEXERGY / ARCHITECTURAL INTELLIGENCE</div>
+        <div className="footer-content"><div><h2>Better buildings<br/><em>begin with better signals.</em></h2><p>Explore the room, test a scenario, and make the assumptions visible.</p></div><div className="footer-actions"><button type="button" onClick={() => onNavigate("twin")}>Enter digital twin <ArrowUpRight size={15}/></button><button type="button" onClick={() => onNavigate("simulator")}>Run a simulation <ArrowUpRight size={15}/></button></div></div>
+        <div className="footer-base"><span>SMART CAMPUS ENERGY OPTIMIZER · ROOM A-101</span><span>Energy and savings shown here are estimates unless identified as historical records.</span></div>
+      </footer>
     </section>
   );
 }

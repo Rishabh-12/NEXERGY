@@ -13,19 +13,65 @@ import {
   Radio,
   Sparkles,
   Bot,
+  Smartphone,
+  ShieldCheck,
+  ArrowUpRight,
 } from "lucide-react";
 import PageHeader from "./PageHeader";
-import { startCamera, stopCamera, getCameraStatus, getCameraFeedUrl, fetchAiInsight } from "../services/api";
+import { startCamera, stopCamera, getCameraStatus, getCameraFeedUrl, fetchAiInsight, sendMobileCameraFrame } from "../services/api";
 
 const POLL_MS = 800;
 
-export default function LiveCamera({ backend }) {
+export default function LiveCamera({ backend, settings, energyEstimate, costEstimate, onNavigate }) {
   const [cam, setCam] = useState(null);       // camera status snapshot
   const [loading, setLoading] = useState(false);
   const [feedKey, setFeedKey] = useState(0);   // bump to reload <img>
   const [aiAdvice, setAiAdvice] = useState(null);
   const [askingAi, setAskingAi] = useState(false);
+  const [phoneStream, setPhoneStream] = useState(null);
+  const [phoneError, setPhoneError] = useState("");
+  const [phoneLoading, setPhoneLoading] = useState(false);
   const pollRef = useRef(null);
+  const phoneVideoRef = useRef(null);
+  const mobileUploadBusy = useRef(false);
+
+  useEffect(() => {
+    if (phoneVideoRef.current && phoneStream) phoneVideoRef.current.srcObject = phoneStream;
+  }, [phoneStream]);
+
+  useEffect(() => {
+    if (!phoneStream) return undefined;
+    return () => {
+      phoneStream.getTracks().forEach((track) => track.stop());
+      getCameraStatus().then((status) => status?.source === "mobile" ? stopCamera() : null).catch(() => {});
+    };
+  }, [phoneStream]);
+
+  useEffect(() => {
+    if (!phoneStream) return undefined;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      const video = phoneVideoRef.current;
+      if (cancelled || mobileUploadBusy.current || !video || video.readyState < 2 || !video.videoWidth) return;
+      mobileUploadBusy.current = true;
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.min(video.videoWidth, 640);
+        canvas.height = Math.round((video.videoHeight / video.videoWidth) * canvas.width);
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Unable to capture a camera frame.");
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const frame = canvas.toDataURL("image/jpeg", 0.58).split(",")[1];
+        await sendMobileCameraFrame(frame);
+        if (!cancelled) setPhoneError("");
+      } catch (error) {
+        if (!cancelled) setPhoneError(error?.message || "Backend frame upload failed. Set VITE_API_URL to a reachable HTTPS backend and check that it has OpenCV and Ultralytics installed.");
+      } finally {
+        mobileUploadBusy.current = false;
+      }
+    }, 1400);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [phoneStream]);
 
   // Poll camera status while mounted
   useEffect(() => {
@@ -85,16 +131,19 @@ export default function LiveCamera({ backend }) {
         status: cam?.status ?? "Empty",
         emptySeconds: cam?.empty_seconds ?? 0,
         energyWasteAlert: cam?.energy_waste_alert ?? false,
-        lightsOn: (cam?.people_count ?? 0) > 0,
-        acOn: (cam?.people_count ?? 0) > 0,
-        totalEnergyKwh: 4.4,
-        totalDailyCost: 35.2,
+        lightsOn: settings?.lightsOn,
+        acOn: settings?.acOn,
+        setpoint: settings?.setpoint,
+        hours: settings?.hours,
+        totalEnergyKwh: energyEstimate,
+        totalDailyCost: costEstimate,
       });
       if (res?.ai_insight) {
+        const source = res.source || "rules";
         setAiAdvice({
           text: res.ai_insight,
-          source: res.source || "gemini",
-          model: res.model || "gemini-3.8-flash",
+          source,
+          model: res.model || (source === "gemini" ? "Gemini" : "Not used"),
           visionContext: res.vision_context,
         });
       }
@@ -103,6 +152,29 @@ export default function LiveCamera({ backend }) {
     } finally {
       setAskingAi(false);
     }
+  }
+
+  async function connectPhoneCamera() {
+    setPhoneError("");
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setPhoneError("Camera access requires a secure page (HTTPS). Open NEXERGY on your phone over HTTPS, then allow camera access. Plain HTTP LAN addresses are usually blocked by browsers.");
+      return;
+    }
+    setPhoneLoading(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+      setPhoneStream(stream);
+    } catch (error) {
+      const reason = error?.name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in the browser's site settings and try again." : error?.name === "NotFoundError" ? "No camera was found on this device." : "The camera could not start. Close other apps using it and try again.";
+      setPhoneError(reason);
+    } finally {
+      setPhoneLoading(false);
+    }
+  }
+
+  function disconnectPhoneCamera() {
+    phoneStream?.getTracks().forEach((track) => track.stop());
+    setPhoneStream(null);
   }
 
   const isActive = cam?.active === true;
@@ -211,37 +283,30 @@ export default function LiveCamera({ backend }) {
               onClick={handleAskGemini}
             >
               <Sparkles size={15} />
-              {askingAi ? "Gemini AI is analyzing vision feed…" : "✨ Ask Gemini AI for Live Advice"}
+              {askingAi ? "Analyzing camera and room data…" : "Ask the AI service for live advice"}
             </button>
           </div>
 
           {aiAdvice && (
-            <div style={{
-              marginTop: "14px",
-              padding: "16px 18px",
-              borderRadius: "14px",
-              border: "1px solid #38bdf8",
-              background: "linear-gradient(145deg, rgba(56, 189, 248, 0.08), rgba(14, 165, 233, 0.03))",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-            }}>
+            <div className="camera-ai-advice">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#38bdf8", fontWeight: "700", fontSize: "12px" }}>
-                  <Bot size={17} /> GOOGLE GEMINI 3.8 FLASH VISION ADVISORY
+                <div className="camera-ai-heading">
+                  <Bot size={17} /> {aiAdvice.source === "gemini" ? "GOOGLE GEMINI INSIGHT" : "BACKEND FALLBACK ADVISORY"}
                 </div>
                 <div style={{ display: "flex", gap: "6px" }}>
-                  <span className="tiny-badge" style={{ color: "#38bdf8", borderColor: "#0284c7" }}>
+                  <span className="tiny-badge camera-ai-meta">
                     {aiAdvice.model}
                   </span>
-                  <span className="tiny-badge" style={{ color: "#a7f3d0", borderColor: "#059669" }}>
+                  <span className="tiny-badge camera-ai-vision">
                     Detected: {aiAdvice.visionContext?.people_count ?? people} people
                   </span>
                 </div>
               </div>
-              <p style={{ color: "#f8fafc", fontSize: "13px", lineHeight: "1.65", margin: "6px 0" }}>
+              <p className="camera-ai-copy">
                 {aiAdvice.text}
               </p>
-              <div style={{ marginTop: "10px", color: "#64748b", fontSize: "10px" }}>
-                Synthesized by Google Gemini AI analyzing real-time YOLOv8 camera headcount and classroom telemetry.
+              <div className="camera-ai-source">
+                Uses the active camera headcount and estimated energy scenario sent to the backend. Energy is an estimate, not a meter reading.
               </div>
             </div>
           )}
@@ -249,7 +314,7 @@ export default function LiveCamera({ backend }) {
           {isActive && (
             <p className="cv-feed-footer">
               <Radio size={12} className="cv-pulse" />
-              Live stream from laptop webcam · YOLOv8n model · Occupancy auto-synced to dashboard
+              Live stream from {cam?.source === "mobile" ? "mobile camera" : "laptop webcam"} · YOLOv8n detection · Occupancy synced to digital twin
             </p>
           )}
         </div>
@@ -357,6 +422,23 @@ export default function LiveCamera({ backend }) {
           </div>
         </div>
       </div>
+
+      <section className="phone-camera-panel">
+        <div className="phone-camera-copy">
+          <div className="phone-camera-heading"><span className="phone-camera-icon"><Smartphone size={19}/></span><div><p className="eyebrow">PHONE CAMERA / ON THIS DEVICE</p><h2>Use your phone as the camera.</h2></div></div>
+          <p>Open NEXERGY on your phone over HTTPS and connect its rear camera. The browser asks for permission only after you press the button.</p>
+          <div className="phone-camera-note"><ShieldCheck size={15}/><span>Compressed frames are sent about once every 1.4 seconds to the configured backend for YOLO detection. The detected occupancy and waste alert update the shared room state and digital twin. No audio is captured.</span></div>
+          {phoneError && <p className="phone-camera-error" role="alert">{phoneError}</p>}
+          <div className="phone-camera-actions">
+            {phoneStream ? <button type="button" className="cv-btn cv-btn-stop" onClick={disconnectPhoneCamera}><CameraOff size={15}/> Disconnect phone camera</button> : <button type="button" className="cv-btn cv-btn-start" disabled={phoneLoading} onClick={connectPhoneCamera}><Camera size={15}/>{phoneLoading ? "Connecting…" : "Connect phone camera"}</button>}
+            <button type="button" className="phone-twin-link" onClick={() => onNavigate?.("twin")}>Open digital twin <ArrowUpRight size={14}/></button>
+          </div>
+        </div>
+        <div className={`phone-camera-preview ${phoneStream ? "is-connected" : ""}`}>
+          {phoneStream ? <video ref={phoneVideoRef} autoPlay playsInline muted aria-label="Phone camera preview"/> : <div className="phone-camera-placeholder"><Smartphone size={30}/><span>Phone camera preview</span><small>Open NEXERGY on your phone over HTTPS to connect.</small></div>}
+          {phoneStream && <span className="phone-live-badge"><i/> CAMERA ACTIVE</span>}
+        </div>
+      </section>
 
       <p className="footnote">
         Computer vision runs locally using YOLOv8n. Video never leaves your machine.

@@ -10,7 +10,8 @@ async function request(path, options = {}) {
   });
 
   if (!response.ok) {
-    throw new Error(`Request to ${path} failed (${response.status})`);
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.detail || `Request to ${path} failed (${response.status})`);
   }
 
   return response.json();
@@ -85,6 +86,13 @@ export function stopCamera() {
 
 export function getCameraStatus() {
   return request("/camera/status");
+}
+
+export function sendMobileCameraFrame(imageBase64) {
+  return request("/camera/mobile-frame", {
+    method: "POST",
+    body: JSON.stringify({ image_base64: imageBase64 }),
+  });
 }
 
 /** Returns the full URL for the MJPEG stream (use as <img src={...}>). */

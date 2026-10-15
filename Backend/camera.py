@@ -29,6 +29,7 @@ class CameraState:
     empty_seconds: int = 0
     fps: float = 0.0
     error: str = ""
+    source: str = "none"            # "laptop" | "mobile" | "none"
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> dict:
@@ -41,6 +42,7 @@ class CameraState:
                 "empty_seconds": self.empty_seconds,
                 "fps": round(self.fps, 1),
                 "error": self.error,
+                "source": self.source,
             }
 
 
@@ -56,6 +58,80 @@ _thread: threading.Thread | None = None
 _stop_event = threading.Event()
 
 EMPTY_THRESHOLD_SECONDS = 3
+_mobile_model = None
+_mobile_model_lock = threading.Lock()
+_mobile_empty_start: float | None = None
+
+
+def process_mobile_frame(frame_bytes: bytes) -> dict:
+    """Run one JPEG frame uploaded by a phone browser through the shared YOLO state."""
+    global cv2, _mobile_model, _mobile_empty_start, _latest_frame
+    if len(frame_bytes) > 2_000_000:
+        raise ValueError("Frame is too large. Send a JPEG under 2 MB.")
+
+    if cv2 is None:
+        try:
+            import cv2
+        except ImportError as exc:
+            raise RuntimeError("OpenCV is not installed on the backend.") from exc
+
+    try:
+        import numpy as np
+        image = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    except Exception as exc:
+        raise ValueError("The uploaded image could not be decoded.") from exc
+    if image is None:
+        raise ValueError("The uploaded image is not a valid JPEG frame.")
+
+    with _mobile_model_lock:
+        if _mobile_model is None:
+            try:
+                from ultralytics import YOLO
+            except ImportError as exc:
+                raise RuntimeError("Ultralytics is not installed on the backend.") from exc
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(script_dir, "yolov8n.pt")
+            if not os.path.exists(model_path):
+                model_path = "yolov8n.pt"
+            _mobile_model = YOLO(model_path)
+        model = _mobile_model
+
+    now = time.time()
+    results = model(image, verbose=False)[0]
+    people = sum(1 for box in results.boxes if int(box.cls[0]) == 0)
+    if people == 0:
+        if _mobile_empty_start is None:
+            _mobile_empty_start = now
+        elapsed = int(now - _mobile_empty_start)
+        waste_alert = elapsed >= EMPTY_THRESHOLD_SECONDS
+    else:
+        _mobile_empty_start = None
+        elapsed = 0
+        waste_alert = False
+
+    annotated = results.plot()
+    ok, buffer = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    if ok:
+        with _frame_lock:
+            _latest_frame = buffer.tobytes()
+    with camera_state._lock:
+        camera_state.active = True
+        camera_state.source = "mobile"
+        camera_state.people_count = people
+        camera_state.status = "Occupied" if people > 0 else "Empty"
+        camera_state.energy_waste_alert = waste_alert
+        camera_state.empty_seconds = elapsed
+        camera_state.fps = 0.0
+        camera_state.error = ""
+
+    return {
+        "message": "Mobile camera frame processed.",
+        "source": "mobile",
+        "people_count": people,
+        "status": "Occupied" if people > 0 else "Empty",
+        "energy_waste_alert": waste_alert,
+        "empty_seconds": elapsed,
+    }
 
 # ---------------------------------------------------------------------------
 # Background capture + detection loop
@@ -100,8 +176,10 @@ def _detection_loop() -> None:
         camera_state.active = False
         return
 
-    camera_state.active = True
-    camera_state.error = ""
+    with camera_state._lock:
+        camera_state.active = True
+        camera_state.source = "laptop"
+        camera_state.error = ""
     empty_start: float | None = None
     prev_time = time.time()
 
@@ -174,7 +252,9 @@ def _detection_loop() -> None:
                 _latest_frame = buf.tobytes()
 
     cap.release()
-    camera_state.active = False
+    with camera_state._lock:
+        camera_state.active = False
+        camera_state.source = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +264,8 @@ def _detection_loop() -> None:
 def start_camera() -> dict:
     """Launch the detection thread (idempotent)."""
     global _thread
+    if camera_state.active and camera_state.source == "mobile":
+        return {"message": "A mobile camera is already connected."}
     if _thread is not None and _thread.is_alive():
         return {"message": "Camera already running"}
     _stop_event.clear()
@@ -201,8 +283,10 @@ def stop_camera() -> dict:
     _stop_event.set()
     if _thread is not None:
         _thread.join(timeout=3)
-    camera_state.active = False
-    camera_state.status = "Inactive"
+    with camera_state._lock:
+        camera_state.active = False
+        camera_state.status = "Inactive"
+        camera_state.source = "none"
     return {"message": "Camera stopped"}
 
 

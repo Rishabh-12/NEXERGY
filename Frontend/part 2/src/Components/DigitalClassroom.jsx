@@ -1,4 +1,5 @@
 import { Building2, Users, Lightbulb, Snowflake, Info, Minus, Plus, AlertTriangle, Camera } from "lucide-react";
+import { useState } from "react";
 import PageHeader from "./PageHeader";
 import { CLASSROOM_CAPACITY } from "../services/energyCalculations";
 
@@ -10,6 +11,7 @@ export default function DigitalClassroom({
   onToggleAc,
   onNavigate,
 }) {
+  const [selectedEquipment, setSelectedEquipment] = useState(null);
   const { occupancy, lightsOn, acOn } = settings;
   const isWasteAlert = Boolean(backend?.energyWasteAlert);
 
@@ -17,7 +19,7 @@ export default function DigitalClassroom({
     <section className="page active">
       <PageHeader
         eyebrow="DIGITAL TWIN"
-        title="Digital Classroom"
+        title="Digital Twin"
         subtitle="Explore a virtual classroom and see how room settings affect estimated energy use."
       />
 
@@ -37,7 +39,7 @@ export default function DigitalClassroom({
         }}>
           <AlertTriangle size={20} color="#ef4444" />
           <span>
-            <strong style={{ color: "#ef4444" }}>AI WASTE ALERT:</strong> Room detected empty for over 3 seconds while appliances are running. Turn off equipment or enable automation to conserve power.
+            <strong style={{ color: "#ef4444" }}>POTENTIAL ENERGY WASTE:</strong> The backend reports an empty room while equipment is running. Review the equipment controls.
           </span>
         </div>
       )}
@@ -67,9 +69,9 @@ export default function DigitalClassroom({
           <div className="camera-notice">
             <Info size={18} />
             <div>
-              <strong>{backend.status === "online" ? "AI Vision & Backend Connected" : "Camera not connected"}</strong>
+                <strong>{backend.status === "online" ? "Backend connected" : "Backend offline · local controls"}</strong>
               <p>
-                Occupancy is synchronized via AI Computer Vision (`camera.py`) or set manually below.
+                Occupancy may arrive from the connected room-state service, or be adjusted manually below. Open the camera page to check its separate connection status.
               </p>
               {backend.status === "online" && backend.message && (
                 <p className="backend-line">Backend: {backend.message}</p>
@@ -229,10 +231,13 @@ export default function DigitalClassroom({
               <div className="toggle-copy">
                 <strong>Classroom lights</strong>
                 <span>Assumed load: 400 W</span>
+                <button type="button" className="equipment-detail-link" onClick={() => setSelectedEquipment(selectedEquipment === "lights" ? null : "lights")}>Details</button>
               </div>
               <button
                 type="button"
                 className={`toggle ${lightsOn ? "enabled" : ""}`}
+                aria-pressed={lightsOn}
+                aria-label={`Turn classroom lights ${lightsOn ? "off" : "on"}`}
                 onClick={onToggleLights}
               >
                 {lightsOn ? "ON" : "OFF"}
@@ -245,15 +250,25 @@ export default function DigitalClassroom({
               <div className="toggle-copy">
                 <strong>Air conditioning</strong>
                 <span>Assumed load: 1,800 W</span>
+                <button type="button" className="equipment-detail-link" onClick={() => setSelectedEquipment(selectedEquipment === "ac" ? null : "ac")}>Details</button>
               </div>
               <button
                 type="button"
                 className={`toggle ${acOn ? "enabled" : ""}`}
+                aria-pressed={acOn}
+                aria-label={`Turn air conditioning ${acOn ? "off" : "on"}`}
                 onClick={onToggleAc}
               >
                 {acOn ? "ON" : "OFF"}
               </button>
             </div>
+            {selectedEquipment && (
+              <div className="equipment-detail-panel" role="status">
+                <strong>{selectedEquipment === "lights" ? "Classroom lighting" : "Air conditioning"}</strong>
+                <span>{selectedEquipment === "lights" ? "Assumed fixture load: 400 W. The room illustration responds to this control." : `Assumed cooling load: 1,800 W. Current twin state: ${acOn ? "running" : "standby"}.`}</span>
+                <small>Illustrative equipment rating · energy is estimated, not metered.</small>
+              </div>
+            )}
           </section>
         </div>
 

@@ -113,10 +113,11 @@ export default function Recommendations({ settings, applied, baseline, simulated
       }
 
       if (insightResult.status === "fulfilled" && insightResult.value?.ai_insight) {
+        const source = insightResult.value.source || "rules";
         setAiInsight({
           text: insightResult.value.ai_insight,
-          source: insightResult.value.source || "gemini",
-          model: insightResult.value.model || "gemini-3.8-flash",
+          source,
+          model: insightResult.value.model || (source === "gemini" ? "Gemini" : "Not used"),
           visionContext: insightResult.value.vision_context,
         });
       }
@@ -133,8 +134,8 @@ export default function Recommendations({ settings, applied, baseline, simulated
       <PageHeader
         eyebrow="SMART INSIGHTS"
         title="AI Recommendations"
-        subtitle="Review explainable energy-saving suggestions powered by Google Gemini and live computer vision."
-        pill={aiInsight ? "Gemini AI active" : (remoteItems ? "Backend rules" : "Local rules")}
+        subtitle="Review explainable suggestions based on available room state, energy estimates, and the backend insight service."
+        pill={aiInsight ? (aiInsight.source === "gemini" ? "Gemini insight" : "Backend fallback") : (remoteItems ? "Backend rules" : "Local rules")}
       />
 
       <section className="panel">
@@ -143,10 +144,10 @@ export default function Recommendations({ settings, applied, baseline, simulated
             <p className="eyebrow">ENERGY EFFICIENCY & VISION TELEMETRY</p>
             <h2>Recommended actions</h2>
             <p style={{ marginTop: 8, color: "#94a3b8", fontSize: 11 }}>
-              Real-time advice synthesized from YOLOv8 camera detection, classroom appliances, and Gemini AI.
+              Recommendations use the current scenario and may come from the backend rules or its configured AI provider.
             </p>
           </div>
-          <span className="tiny-badge">Gemini 3.8 Flash</span>
+          <span className="tiny-badge">Backend + local rules</span>
         </div>
 
         <button
@@ -162,35 +163,35 @@ export default function Recommendations({ settings, applied, baseline, simulated
         {notice && <p className="ai-message">{notice}</p>}
 
         {aiInsight && (
-          <article className="rec-item" style={{ borderColor: "#38bdf8", background: "rgba(56, 189, 248, 0.05)", marginBottom: "22px" }}>
+          <article className="rec-item rec-ai-item">
             <div className="rec-top" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <div className="rec-icon" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8" }}>
+                <div className="rec-icon rec-ai-icon">
                   <Bot size={18} />
                 </div>
-                <span className="priority" style={{ color: "#38bdf8" }}>
-                  {aiInsight.source === "gemini" ? "GOOGLE GEMINI AI INSIGHT" : "AI ADVISORY ENGINE"}
+                <span className="priority rec-ai-priority">
+                  {aiInsight.source === "gemini" ? "GOOGLE GEMINI AI INSIGHT" : "BACKEND RULE-BASED INSIGHT"}
                 </span>
               </div>
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                <span className="tiny-badge" style={{ color: "#38bdf8", borderColor: "#0284c7" }}>
+                <span className="tiny-badge rec-ai-meta">
                   Model: {aiInsight.model}
                 </span>
-                <span className="tiny-badge" style={{ color: "#a7f3d0", borderColor: "#059669" }}>
+                <span className="tiny-badge rec-ai-vision">
                   Vision: {aiInsight.visionContext?.people_count ?? settings.occupancy} people
                 </span>
                 {(aiInsight.visionContext?.energy_waste_alert || backend?.energyWasteAlert) && (
-                  <span className="tiny-badge" style={{ color: "#fca5a5", borderColor: "#dc2626", background: "rgba(220,38,38,0.15)" }}>
+                  <span className="tiny-badge rec-ai-alert">
                     Waste Alert Active
                   </span>
                 )}
               </div>
             </div>
-            <h3 style={{ color: "#38bdf8", marginTop: "14px" }}>Live Camera & Energy Optimization Strategy</h3>
-            <p style={{ color: "#f1f5f9", fontSize: "14px", lineHeight: "1.65", margin: "10px 0" }}>{aiInsight.text}</p>
+            <h3 className="rec-ai-title">Live Camera & Energy Optimization Strategy</h3>
+            <p className="rec-ai-copy">{aiInsight.text}</p>
             <div className="action-box">
-              <strong>GEMINI TELEMETRY ANALYSIS</strong>
-              Synthesized by Google Gemini from real-time YOLOv8 camera headcount, digital-twin cooling loads, and campus historical data.
+              <strong>{aiInsight.source === "gemini" ? "GEMINI INSIGHT SOURCE" : "BACKEND FALLBACK SOURCE"}</strong>
+                {aiInsight.source === "gemini" ? "Generated by the configured Gemini service from the data supplied to the backend." : "Generated by the backend fallback from the available room and scenario state."}
             </div>
           </article>
         )}

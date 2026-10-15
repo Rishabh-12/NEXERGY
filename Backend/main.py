@@ -1,13 +1,15 @@
 import os
 import csv
+import base64
+import binascii
 from typing import Optional, List
 import requests
 import pandas as pd
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from camera import camera_state, start_camera, stop_camera, mjpeg_generator
+from camera import camera_state, start_camera, stop_camera, mjpeg_generator, process_mobile_frame
 
 try:
     from dotenv import load_dotenv
@@ -116,6 +118,9 @@ class RecommendationRequest(BaseModel):
     simulated_energy_kwh: Optional[float] = 0.0
     estimated_savings_kwh: Optional[float] = 0.0
     estimated_savings_rupees: Optional[float] = 0.0
+
+class MobileCameraFrame(BaseModel):
+    image_base64: str
 
 # --- ENDPOINTS ---
 
@@ -419,6 +424,27 @@ def recommendations(data: RecommendationRequest):
 def api_start_camera():
     """Start the YOLOv8 webcam detection thread."""
     result = start_camera()
+    return result
+
+@app.post("/camera/mobile-frame")
+def api_mobile_camera_frame(data: MobileCameraFrame):
+    """Accept a compressed JPEG frame from the phone browser and update shared YOLO state."""
+    if camera_state.active and camera_state.source == "laptop":
+        raise HTTPException(status_code=409, detail="Stop the laptop camera before connecting a mobile camera.")
+    if len(data.image_base64) > 2_700_000:
+        raise HTTPException(status_code=413, detail="Frame is too large. Send a JPEG under 2 MB.")
+    try:
+        frame_bytes = base64.b64decode(data.image_base64, validate=True)
+        result = process_mobile_frame(frame_bytes)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    room_state["people_count"] = result["people_count"]
+    room_state["energy_waste_alert"] = result["energy_waste_alert"]
+    room_state["AC"] = result["people_count"] > 0
+    room_state["Ceiling Fan"] = result["people_count"] > 0
     return result
 
 @app.post("/camera/stop")

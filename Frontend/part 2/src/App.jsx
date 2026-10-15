@@ -15,6 +15,7 @@ import {
   buildSimulationPayload,
   calculateEnergy,
   calculateSavings,
+  TARIFF_RUPEES_PER_KWH,
 } from "./services/energyCalculations";
 
 const INITIAL_SETTINGS = {
@@ -40,11 +41,28 @@ const clampOccupancy = (n) => Math.min(CLASSROOM_CAPACITY, Math.max(0, n));
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem("nexergy-theme") === "dark" ? "dark" : "light"; }
+    catch { return "light"; }
+  });
   const [settings, setSettings] = useState(INITIAL_SETTINGS);
   const [applied, setApplied] = useState(INITIAL_APPLIED);
   const [applying, setApplying] = useState(false);
   const [backend, setBackend] = useState({ status: "checking", message: "", energyWasteAlert: false });
+  const [events, setEvents] = useState([]);
   const lastLocalChange = useRef(0);
+  const lastRoomState = useRef(null);
+  const lastBackendStatus = useRef("checking");
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("nexergy-theme", theme); } catch { /* Theme still applies for this session. */ }
+  }, [theme]);
+
+  const recordEvent = useCallback((kind, title, detail, source) => {
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setEvents((current) => [{ id: `${Date.now()}-${Math.random()}`, kind, title, detail, source, time }, ...current].slice(0, 6));
+  }, []);
 
   const updateSettings = useCallback(
     (patch) => setSettings((current) => ({ ...current, ...patch })),
@@ -60,20 +78,53 @@ export default function App() {
       try {
         const state = await getRoomState();
         if (cancelled) return;
+        if (lastBackendStatus.current !== "online") {
+          recordEvent("connection", "Backend connected", "Room-state polling is receiving responses.", "BACKEND");
+          lastBackendStatus.current = "online";
+        }
         setBackend((b) => ({
           ...b,
           status: "online",
           energyWasteAlert: Boolean(state.energy_waste_alert),
         }));
 
+        const observed = {
+          occupancy: Number.isFinite(state.people_count) ? clampOccupancy(state.people_count) : null,
+          energyWasteAlert: Boolean(state.energy_waste_alert),
+          acOn: typeof state.AC === "boolean" ? state.AC : null,
+          lightsOn: typeof state.Lights === "boolean" ? state.Lights : null,
+        };
+        if (lastRoomState.current) {
+          const previous = lastRoomState.current;
+          if (observed.occupancy !== null && observed.occupancy !== previous.occupancy) {
+            recordEvent("room", "Room state updated", `${observed.occupancy} ${observed.occupancy === 1 ? "person" : "people"} reported by the room-state endpoint.`, "BACKEND");
+          }
+          if (observed.energyWasteAlert && !previous.energyWasteAlert) {
+            recordEvent("alert", "Potential energy waste reported", "The backend raised an energy-waste alert for the room.", "BACKEND");
+          }
+          if (!observed.energyWasteAlert && previous.energyWasteAlert) {
+            recordEvent("room", "Waste alert cleared", "The backend no longer reports an active energy-waste alert.", "BACKEND");
+          }
+        }
+        lastRoomState.current = observed;
+
         const recentlyChanged =
           Date.now() - lastLocalChange.current < LOCAL_CHANGE_GRACE_MS;
         if (!recentlyChanged && Number.isFinite(state.people_count)) {
           const count = clampOccupancy(state.people_count);
-          setSettings((s) => (s.occupancy === count ? s : { ...s, occupancy: count }));
+          setSettings((s) => {
+            const acOn = typeof state.AC === "boolean" ? state.AC : s.acOn;
+            return s.occupancy === count && s.acOn === acOn ? s : { ...s, occupancy: count, acOn };
+          });
         }
       } catch {
-        if (!cancelled) setBackend((b) => ({ ...b, status: "offline", message: "", energyWasteAlert: false }));
+        if (!cancelled) {
+          if (lastBackendStatus.current !== "offline") {
+            recordEvent("offline", "Backend connection unavailable", "Showing local controls and estimates until the service responds.", "INTERFACE");
+            lastBackendStatus.current = "offline";
+          }
+          setBackend((b) => ({ ...b, status: "offline", message: "", energyWasteAlert: false }));
+        }
       }
     }
 
@@ -83,7 +134,7 @@ export default function App() {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [recordEvent]);
 
   const changeOccupancy = useCallback(async (next) => {
     const count = clampOccupancy(next);
@@ -97,6 +148,12 @@ export default function App() {
       setBackend({ status: "offline", message: "" });
     }
   }, []);
+
+  const changeEquipment = useCallback((key) => {
+    const next = !settings[key];
+    updateSettings({ [key]: next });
+    recordEvent("local", "Twin control changed", `${key === "lightsOn" ? "Classroom lighting" : "Air conditioning"} set ${next ? "on" : "off"} in this interface.`, "INTERFACE");
+  }, [settings, updateSettings, recordEvent]);
 
   // Live (not yet applied) estimates for the current switches and hours.
   const baselineEnergy = calculateEnergy({ lightsOn: true, acOn: true, hours: settings.hours });
@@ -117,6 +174,7 @@ export default function App() {
         carbon: result.carbon_saved_kg,
         source: "backend",
       });
+      recordEvent("simulation", "Simulation completed", `${result.energy_saved_kwh.toFixed(2)} kWh estimated savings · backend calculation.`, "BACKEND");
       setBackend((b) => ({ ...b, status: "online" }));
     } catch {
       const savings = calculateSavings({ baseline: baselineEnergy, simulated: simulatedEnergy });
@@ -127,6 +185,7 @@ export default function App() {
         carbon: savings.savedCarbonKg,
         source: "local",
       });
+      recordEvent("simulation", "Simulation preview applied", `${savings.savedKwh.toFixed(2)} kWh estimated savings · local calculation.`, "LOCAL ESTIMATE");
       setBackend({ status: "offline", message: "" });
     } finally {
       setApplying(false);
@@ -135,7 +194,7 @@ export default function App() {
 
   return (
     <>
-      <Sidebar activePage={page} onNavigate={setPage} backendStatus={backend.status} />
+      <Sidebar activePage={page} onNavigate={setPage} backendStatus={backend.status} theme={theme} onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")} />
 
       <main>
         {page === "dashboard" && (
@@ -145,22 +204,23 @@ export default function App() {
             baseline={baselineEnergy.energyKwh}
             onNavigate={setPage}
             backend={backend}
+            events={events}
           />
         )}
 
-        {page === "classroom" && (
+        {page === "twin" && (
           <DigitalClassroom
             settings={settings}
             backend={backend}
             onOccupancyChange={changeOccupancy}
-            onToggleLights={() => updateSettings({ lightsOn: !settings.lightsOn })}
-            onToggleAc={() => updateSettings({ acOn: !settings.acOn })}
+            onToggleLights={() => changeEquipment("lightsOn")}
+            onToggleAc={() => changeEquipment("acOn")}
             onNavigate={setPage}
           />
         )}
 
         {page === "camera" && (
-          <LiveCamera backend={backend} />
+          <LiveCamera backend={backend} settings={settings} energyEstimate={simulatedEnergy.energyKwh} costEstimate={simulatedEnergy.energyKwh * TARIFF_RUPEES_PER_KWH} onNavigate={setPage} />
         )}
 
         {page === "simulator" && (
@@ -184,6 +244,7 @@ export default function App() {
             backend={backend}
           />
         )}
+
       </main>
     </>
   );
