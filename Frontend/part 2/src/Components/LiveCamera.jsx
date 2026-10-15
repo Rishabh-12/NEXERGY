@@ -18,14 +18,13 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import PageHeader from "./PageHeader";
-import { startCamera, stopCamera, getCameraStatus, getCameraFeedUrl, fetchAiInsight, sendMobileCameraFrame } from "../services/api";
+import { stopCamera, getCameraStatus, getCameraFeedUrl, fetchAiInsight, sendMobileCameraFrame } from "../services/api";
 
 const POLL_MS = 800;
 
 export default function LiveCamera({ backend, settings, energyEstimate, costEstimate, onNavigate }) {
   const [cam, setCam] = useState(null);       // camera status snapshot
   const [loading, setLoading] = useState(false);
-  const [feedKey, setFeedKey] = useState(0);   // bump to reload <img>
   const [aiAdvice, setAiAdvice] = useState(null);
   const [askingAi, setAskingAi] = useState(false);
   const [phoneStream, setPhoneStream] = useState(null);
@@ -53,6 +52,10 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
     const timer = setInterval(async () => {
       const video = phoneVideoRef.current;
       if (cancelled || mobileUploadBusy.current || !video || video.readyState < 2 || !video.videoWidth) return;
+      if (backend?.status !== "online") {
+        if (!cancelled) setPhoneError("Camera preview is live, but person detection needs the NEXERGY backend. Deploy the Render service and the feed will connect automatically.");
+        return;
+      }
       mobileUploadBusy.current = true;
       try {
         const canvas = document.createElement("canvas");
@@ -71,7 +74,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
       }
     }, 1400);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [phoneStream]);
+  }, [backend?.status, phoneStream]);
 
   // Poll camera status while mounted
   useEffect(() => {
@@ -95,29 +98,21 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
   }, []);
 
   async function handleStart() {
-    setLoading(true);
-    try {
-      await startCamera();
-      // Give the thread a moment then refresh
-      await new Promise((r) => setTimeout(r, 1200));
-      const s = await getCameraStatus();
-      setCam(s);
-      setFeedKey((k) => k + 1);
-    } catch {
-      /* noop */
-    } finally {
-      setLoading(false);
-    }
+    await connectPhoneCamera();
   }
 
   async function handleStop() {
     setLoading(true);
     try {
-      await stopCamera();
-      const s = await getCameraStatus();
-      setCam(s);
-    } catch {
-      /* noop */
+      disconnectPhoneCamera();
+      if (backend?.status === "online") {
+        await stopCamera();
+        const s = await getCameraStatus();
+        setCam(s);
+      }
+      setPhoneError("");
+    } catch (error) {
+      setPhoneError(error?.message || "Could not stop the camera cleanly. Refresh the page and try again.");
     } finally {
       setLoading(false);
     }
@@ -165,7 +160,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
       const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } });
       setPhoneStream(stream);
     } catch (error) {
-      const reason = error?.name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in the browser's site settings and try again." : error?.name === "NotFoundError" ? "No camera was found on this device." : "The camera could not start. Close other apps using it and try again.";
+      const reason = !window.isSecureContext ? "Camera access requires HTTPS (or localhost). Open this site securely and try again." : error?.name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in the browser's site settings and try again." : error?.name === "NotFoundError" ? "No camera was found on this device." : "The camera could not start. Close other apps using it and try again.";
       setPhoneError(reason);
     } finally {
       setPhoneLoading(false);
@@ -178,6 +173,8 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
   }
 
   const isActive = cam?.active === true;
+  const hasCameraPreview = Boolean(phoneStream);
+  const cameraConnected = isActive || hasCameraPreview;
   const people = cam?.people_count ?? 0;
   const waste = cam?.energy_waste_alert ?? false;
   const empty = cam?.empty_seconds ?? 0;
@@ -191,7 +188,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
         eyebrow="AI COMPUTER VISION"
         title="Live Camera Feed"
         subtitle="Real-time YOLOv8 person detection with automated energy-waste monitoring."
-        pill={isActive ? "Camera active" : "Camera inactive"}
+        pill={isActive ? "Vision active" : hasCameraPreview ? "Camera preview" : "Camera inactive"}
       />
 
       {/* Waste alert banner */}
@@ -214,15 +211,15 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
               <h2 style={{ marginTop: 4 }}>Room A-101 Camera</h2>
             </div>
             <div className="cv-feed-controls">
-              {!isActive ? (
+              {!cameraConnected ? (
                 <button
                   type="button"
                   className="cv-btn cv-btn-start"
-                  disabled={loading || backend?.status !== "online"}
+                  disabled={loading || phoneLoading}
                   onClick={handleStart}
                 >
                   <Camera size={16} />
-                  {loading ? "Starting…" : "Start Camera"}
+                  {loading || phoneLoading ? "Connecting…" : "Start Camera"}
                 </button>
               ) : (
                 <button
@@ -238,10 +235,18 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
             </div>
           </div>
 
-          <div className={`cv-feed-container ${isActive ? "" : "cv-inactive"}`}>
-            {isActive ? (
+          <div className={`cv-feed-container ${cameraConnected ? "" : "cv-inactive"}`}>
+            {hasCameraPreview ? (
+              <video
+                ref={phoneVideoRef}
+                autoPlay
+                playsInline
+                muted
+                aria-label="Live camera preview"
+                className="cv-feed-img"
+              />
+            ) : isActive ? (
               <img
-                key={feedKey}
                 src={getCameraFeedUrl()}
                 alt="Live camera feed"
                 className="cv-feed-img"
@@ -251,21 +256,21 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
                 <Camera size={64} strokeWidth={1} />
                 <h3>Camera Offline</h3>
                 <p>
-                  {backend?.status !== "online"
-                    ? "Backend must be online to start the camera."
-                    : errorMsg || "Click 'Start Camera' to begin real-time AI detection."}
+                  {phoneError || (backend?.status !== "online"
+                    ? "Press Start Camera to preview this device. Person detection needs the backend to be online."
+                    : errorMsg || "Click 'Start Camera' to begin real-time AI detection.")}
                 </p>
               </div>
             )}
 
             {/* Live overlay badges */}
-            {isActive && (
+            {cameraConnected && (
               <div className="cv-overlay-badges">
                 <span className={`cv-badge ${people > 0 ? "cv-badge-green" : "cv-badge-gray"}`}>
                   <Users size={13} /> {people} {people === 1 ? "person" : "people"}
                 </span>
-                <span className={`cv-badge ${waste ? "cv-badge-red" : "cv-badge-green"}`}>
-                  <Shield size={13} /> {waste ? "WASTE ALERT" : "Normal"}
+                <span className={`cv-badge ${waste ? "cv-badge-red" : isActive ? "cv-badge-green" : "cv-badge-gray"}`}>
+                  <Shield size={13} /> {waste ? "WASTE ALERT" : isActive ? "Detection active" : "Preview only"}
                 </span>
                 <span className="cv-badge cv-badge-blue">
                   <Gauge size={13} /> {fps} FPS
@@ -273,6 +278,8 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
               </div>
             )}
           </div>
+
+          {phoneError && cameraConnected && <p className="phone-camera-error" role="status">{phoneError}</p>}
 
           <div style={{ marginTop: "14px", display: "flex", gap: "10px", alignItems: "center" }}>
             <button
@@ -311,10 +318,10 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
             </div>
           )}
 
-          {isActive && (
+          {cameraConnected && (
             <p className="cv-feed-footer">
               <Radio size={12} className="cv-pulse" />
-              Live stream from {cam?.source === "mobile" ? "mobile camera" : "laptop webcam"} · YOLOv8n detection · Occupancy synced to digital twin
+              {isActive ? "Browser camera frames are being analyzed by YOLO and synced to the digital twin." : "Local camera preview only. Occupancy detection starts when the backend is online."}
             </p>
           )}
         </div>
@@ -426,23 +433,22 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
       <section className="phone-camera-panel">
         <div className="phone-camera-copy">
           <div className="phone-camera-heading"><span className="phone-camera-icon"><Smartphone size={19}/></span><div><p className="eyebrow">PHONE CAMERA / ON THIS DEVICE</p><h2>Use your phone as the camera.</h2></div></div>
-          <p>Open NEXERGY on your phone over HTTPS and connect its rear camera. The browser asks for permission only after you press the button.</p>
-          <div className="phone-camera-note"><ShieldCheck size={15}/><span>Compressed frames are sent about once every 1.4 seconds to the configured backend for YOLO detection. The detected occupancy and waste alert update the shared room state and digital twin. No audio is captured.</span></div>
-          {phoneError && <p className="phone-camera-error" role="alert">{phoneError}</p>}
+          <p>Press Start Camera above on this device. On a phone, open NEXERGY over HTTPS to use its rear camera. The browser asks for permission only after you start it.</p>
+          <div className="phone-camera-note"><ShieldCheck size={15}/><span>When the backend is online, compressed frames are sent about every 1.4 seconds for YOLO person detection. Occupancy updates sync to the shared room state and digital twin. No audio is captured.</span></div>
+          {phoneError && !cameraConnected && <p className="phone-camera-error" role="alert">{phoneError}</p>}
           <div className="phone-camera-actions">
             {phoneStream ? <button type="button" className="cv-btn cv-btn-stop" onClick={disconnectPhoneCamera}><CameraOff size={15}/> Disconnect phone camera</button> : <button type="button" className="cv-btn cv-btn-start" disabled={phoneLoading} onClick={connectPhoneCamera}><Camera size={15}/>{phoneLoading ? "Connecting…" : "Connect phone camera"}</button>}
             <button type="button" className="phone-twin-link" onClick={() => onNavigate?.("twin")}>Open digital twin <ArrowUpRight size={14}/></button>
           </div>
         </div>
         <div className={`phone-camera-preview ${phoneStream ? "is-connected" : ""}`}>
-          {phoneStream ? <video ref={phoneVideoRef} autoPlay playsInline muted aria-label="Phone camera preview"/> : <div className="phone-camera-placeholder"><Smartphone size={30}/><span>Phone camera preview</span><small>Open NEXERGY on your phone over HTTPS to connect.</small></div>}
-          {phoneStream && <span className="phone-live-badge"><i/> CAMERA ACTIVE</span>}
+          <div className="phone-camera-placeholder"><Smartphone size={30}/><span>{phoneStream ? "Camera preview is shown above" : "Camera preview appears above"}</span><small>Connect from the Start Camera button. Open this page over HTTPS on a phone to use its rear camera.</small></div>
+          {phoneStream && <span className="phone-live-badge"><i/> CAMERA CONNECTED</span>}
         </div>
       </section>
 
       <p className="footnote">
-        Computer vision runs locally using YOLOv8n. Video never leaves your machine.
-        Occupancy data is synced to the backend and reflected across all dashboard pages in real time.
+        The camera preview stays in your browser. When the backend is online, compressed frames are sent to it for YOLOv8n person detection; occupancy is synced across the dashboard. Energy values remain estimates, not meter readings.
       </p>
     </section>
   );
