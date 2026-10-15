@@ -1,283 +1,79 @@
-import { Building2, Users, Lightbulb, Snowflake, Info, Minus, Plus, AlertTriangle, Camera } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { ArrowLeft, ArrowUpRight, Building2, Lightbulb, Minus, Plus, Snowflake, Users, Zap } from "lucide-react";
 import PageHeader from "./PageHeader";
 import { CLASSROOM_CAPACITY } from "../services/energyCalculations";
+import { FLOORS, getRoomSnapshot } from "./campusData";
+import CampusOverview from "./CampusOverview";
 
-export default function DigitalClassroom({
-  settings,
-  backend,
-  onOccupancyChange,
-  onToggleLights,
-  onToggleAc,
-  onNavigate,
-}) {
-  const [selectedEquipment, setSelectedEquipment] = useState(null);
-  const { occupancy, lightsOn, acOn } = settings;
-  const isWasteAlert = Boolean(backend?.energyWasteAlert);
+const allOn = (length, enabled) => Array.from({ length }, () => enabled);
+
+export default function DigitalClassroom({ settings, backend, onOccupancyChange, roomEquipmentByRoom, roomOccupancy, onSampleOccupancyChange, onRoomEquipmentChange, selectedRoom, onSelectRoom }) {
+  const [viewingRoomId, setViewingRoomId] = useState(null);
+  const [setpoints, setSetpoints] = useState({});
+  const snapshot = getRoomSnapshot(selectedRoom, settings, roomEquipmentByRoom?.[selectedRoom], roomOccupancy?.[selectedRoom]);
+  const roomEquipment = roomEquipmentByRoom?.[selectedRoom];
+  const lights = roomEquipment?.lights ?? allOn(10, snapshot.lightsOn);
+  const acs = roomEquipment?.acs ?? allOn(3, snapshot.acOn);
+  const occupancy = snapshot.occupancy;
+  const setpoint = setpoints[selectedRoom] ?? settings.setpoint ?? 22;
+  const activeFloor = FLOORS.find((floor) => floor.rooms.some((room) => room.id === selectedRoom));
+  const watts = lights.filter(Boolean).length * 40 + acs.filter(Boolean).length * 600;
+  const connected = snapshot.connected && backend.status === "online";
+
+  const roomView = viewingRoomId === selectedRoom;
+  const roomLabel = useMemo(() => `${activeFloor?.label ?? "Campus"} · ${snapshot.name}`, [activeFloor, snapshot.name]);
+  const toggleLight = (index) => {
+    const next = lights.map((on, i) => i === index ? !on : on);
+    onRoomEquipmentChange(selectedRoom, { lights: next });
+  };
+  const toggleAc = (index) => {
+    const next = acs.map((on, i) => i === index ? !on : on);
+    onRoomEquipmentChange(selectedRoom, { acs: next });
+  };
+  const setPeople = (next) => {
+    const count = Math.max(0, Math.min(CLASSROOM_CAPACITY, next));
+    if (snapshot.connected) onOccupancyChange(count);
+    else onSampleOccupancyChange(selectedRoom, count);
+  };
 
   return (
     <section className="page active">
-      <PageHeader
-        eyebrow="DIGITAL TWIN"
-        title="Digital Twin"
-        subtitle="Explore a virtual classroom and see how room settings affect estimated energy use."
-      />
-
-      {isWasteAlert && (
-        <div style={{
-          background: "linear-gradient(90deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05))",
-          border: "1px solid #ef4444",
-          color: "#fca5a5",
-          padding: "12px 18px",
-          borderRadius: "10px",
-          marginBottom: "20px",
-          display: "flex",
-          alignItems: "center",
-          gap: "12px",
-          fontSize: "14px",
-          fontWeight: "500"
-        }}>
-          <AlertTriangle size={20} color="#ef4444" />
-          <span>
-            <strong style={{ color: "#ef4444" }}>POTENTIAL ENERGY WASTE:</strong> The backend reports an empty room while equipment is running. Review the equipment controls.
-          </span>
+      <PageHeader eyebrow="DIGITAL TWIN" title="Digital Twin" subtitle="Explore a three-level campus model, enter a room, and inspect its occupancy and estimated equipment load." />
+      {!roomView ? (
+        <div className="twin-overview-mode">
+          <CampusOverview backend={backend} settings={settings} roomEquipment={roomEquipmentByRoom} roomOccupancy={roomOccupancy} selectedRoom={selectedRoom} onSelectRoom={onSelectRoom} variant="twin" />
+          <section className="panel twin-entry-panel">
+            <div><p className="eyebrow">ROOM SELECTION · {selectedRoom}</p><h2>{snapshot.name}</h2><p>Open the selected room to inspect its seating, ten ceiling lights, and three independently controlled AC units.</p></div>
+            <div className="twin-entry-metrics"><span><Users size={15}/>{occupancy} / {CLASSROOM_CAPACITY} people</span><span><Zap size={15}/>{watts} W estimated</span></div>
+            <button type="button" className="primary action" onClick={() => setViewingRoomId(selectedRoom)}>Enter room <ArrowUpRight size={16}/></button>
+          </section>
+        </div>
+      ) : (
+        <div className="twin-room-transition">
+          <div className="twin-room-toolbar">
+            <button type="button" className="secondary action" onClick={() => setViewingRoomId(null)}><ArrowLeft size={15}/> Back to building</button>
+            <div><span className="eyebrow">BUILDING A · ROOM {selectedRoom}</span><h2>{roomLabel}</h2></div>
+            <span className={`room-connection-tag ${connected ? "is-connected" : ""}`}>{connected ? "LIVE OCCUPANCY" : "ESTIMATE ONLY"}</span>
+          </div>
+          <section className="classroom-scene-card twin-interior-card">
+            <div className="scene-topbar"><div><p className="eyebrow">ILLUSTRATIVE DIGITAL TWIN</p><h3>{snapshot.name}</h3></div><div className="scene-state-list"><span className={`scene-state ${lights.some(Boolean) ? "on" : "off"}`}><Lightbulb size={12}/>Lights {lights.filter(Boolean).length}/10</span><span className={`scene-state ${acs.some(Boolean) ? "on" : "off"}`}><Snowflake size={12}/>AC {acs.filter(Boolean).length}/3</span></div></div>
+            <div className={`classroom-scene twin-interior ${lights.some(Boolean) ? "" : "lights-off"}`}>
+              <div className="twin-wall-panel">
+                <div className="twin-ceiling-array"><span>CEILING ARRAY · 10 FIXTURES</span><div>{lights.map((on, index) => <button type="button" key={index} title={`Toggle ceiling light ${index + 1}`} aria-label={`Toggle ceiling light ${index + 1}`} aria-pressed={on} className={`twin-light-unit ${on ? "is-on" : ""}`} onClick={() => toggleLight(index)} />)}</div></div>
+                <div className="twin-wall-devices">
+                  <div className="twin-ac-array"><span>CLIMATE · 3 INDEPENDENT UNITS</span><div>{acs.map((on, index) => <button type="button" key={index} aria-pressed={on} className={`twin-ac-unit ${on ? "is-on" : ""}`} onClick={() => toggleAc(index)}><Snowflake size={17}/><strong>AC {index + 1}</strong><small>{on ? `${setpoint}°C · ON` : "STANDBY"}</small></button>)}</div></div>
+                  <div className="twin-board"><span>SMART LEARNING ZONE</span><small>ENERGY-AWARE ROOM MODEL</small></div>
+                  <div className="twin-temp-control"><span>TARGET TEMP</span><strong>{setpoint}°C</strong><div><button type="button" aria-label="Increase target temperature" onClick={() => setSetpoints((current) => ({ ...current, [selectedRoom]: Math.min(30, setpoint + 1) }))}><Plus size={12}/></button><button type="button" aria-label="Decrease target temperature" onClick={() => setSetpoints((current) => ({ ...current, [selectedRoom]: Math.max(16, setpoint - 1) }))}><Minus size={12}/></button></div></div>
+                </div>
+              </div>
+              <div className="twin-seating-head"><div><span>SEATING PLAN</span><small>Tap a desk to change its simulated occupancy</small></div><strong>{occupancy} <small>/ {CLASSROOM_CAPACITY} occupied</small></strong></div>
+              <div className="twin-seat-grid">{Array.from({ length: CLASSROOM_CAPACITY }, (_, index) => { const occupied = index < occupancy; return <button type="button" key={index} aria-pressed={occupied} className={`twin-seat ${occupied ? "is-occupied" : ""}`} onClick={() => setPeople(occupied ? occupancy - 1 : occupancy + 1)}><Users size={15}/><strong>DESK {String(index + 1).padStart(2, "0")}</strong><small>{occupied ? "OCCUPIED" : "VACANT"}</small></button>; })}</div>
+              <div className="twin-room-footer"><span><Building2 size={13}/>Illustrative room model · occupancy {connected ? "from connected room state" : "sample estimate"}</span><span><Zap size={13}/>{watts} W assumed load · energy is estimated, not metered</span></div>
+            </div>
+          </section>
+          <p className="footnote">Room equipment uses illustrative ratings of 40 W per light and 600 W per AC unit. The connected A-101 master controls stay synchronized with the existing app state; other rooms remain local sample scenarios.</p>
         </div>
       )}
-
-      <div className="classroom-page">
-        <section className="panel classroom-overview">
-          <div>
-            <p className="eyebrow">ROOM A-101 · DIGITAL TWIN</p>
-            <h2 style={{ marginTop: 7 }}>Classroom live view</h2>
-            <p style={{ color: "#94a3b8", fontSize: 12, maxWidth: 540, marginTop: 8 }}>
-              Explore a virtual representation of the room. Change demo occupancy and
-              equipment states to see the shared dashboard update.
-            </p>
-            <div className="classroom-badges">
-              <span className="classroom-badge">
-                <Building2 size={12} /> A-101
-              </span>
-              <span className="classroom-badge">
-                <Users size={12} /> {occupancy} / {CLASSROOM_CAPACITY} seats occupied
-              </span>
-              <span className={`classroom-badge ${backend.status === "online" ? "active" : "demo"}`}>
-                {backend.status === "online" ? "Live Connected" : "Demo mode"}
-              </span>
-            </div>
-          </div>
-
-          <div className="camera-notice">
-            <Info size={18} />
-            <div>
-                <strong>{backend.status === "online" ? "Backend connected" : "Backend offline · local controls"}</strong>
-              <p>
-                Occupancy may arrive from the connected room-state service, or be adjusted manually below. Open the camera page to check its separate connection status.
-              </p>
-              {backend.status === "online" && backend.message && (
-                <p className="backend-line">Backend: {backend.message}</p>
-              )}
-              {onNavigate && (
-                <button
-                  type="button"
-                  style={{
-                    marginTop: "10px",
-                    padding: "7px 12px",
-                    fontSize: "11px",
-                    fontWeight: "600",
-                    color: "#052e26",
-                    background: "#6ee7b7",
-                    border: "none",
-                    borderRadius: "7px",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                  onClick={() => onNavigate("camera")}
-                >
-                  <Camera size={13} /> Open Live Camera Feed
-                </button>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="classroom-scene-card">
-          <div className="scene-topbar">
-            <div>
-              <p className="eyebrow">VIRTUAL SPACE</p>
-              <h3>Learning zone</h3>
-            </div>
-            <div className="scene-state-list">
-              <span className={`scene-state ${lightsOn ? "on" : "off"}`}>
-                <Lightbulb size={12} /> Lights {lightsOn ? "ON" : "OFF"}
-              </span>
-              <span className={`scene-state ${acOn ? "on" : "off"}`}>
-                <Snowflake size={12} /> AC {acOn ? "ON" : "OFF"}
-              </span>
-            </div>
-          </div>
-
-          <div className={`classroom-scene ${lightsOn ? "" : "lights-off"}`}>
-            <div className="back-wall">
-              <div className="window-row">
-                {[0, 1].map((w) => (
-                  <div className="window" key={w}>
-                    <span />
-                    <span />
-                    <span />
-                  </div>
-                ))}
-              </div>
-              <div className="board">
-                <div className="board-line long" />
-                <div className="board-line medium" />
-                <div className="board-line short" />
-                <div className="board-caption">SMART LEARNING</div>
-              </div>
-              <div className={`ac-unit ${acOn ? "" : "off"}`}>
-                ❄ <span>{acOn ? "COOLING" : "STANDBY"}</span>
-              </div>
-              <div className="light-row">
-                <span className="ceiling-light" />
-                <span className="ceiling-light" />
-                <span className="ceiling-light" />
-              </div>
-            </div>
-
-            <div className="floor">
-              <div className="desk-grid">
-                {Array.from({ length: CLASSROOM_CAPACITY }, (_, i) => {
-                  const full = i < occupancy;
-                  return (
-                    <div className={`seat ${full ? "occupied" : ""}`} key={i}>
-                      <div className="person">{full ? "♟" : "·"}</div>
-                      <div className="desk">
-                        ▤<small>DESK {String(i + 1).padStart(2, "0")}</small>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="scene-caption">
-              <span>Illustrative room model</span>
-              <span>
-                Lighting {lightsOn ? "active" : "inactive"} · Cooling{" "}
-                {acOn ? "active" : "inactive"}
-              </span>
-            </div>
-          </div>
-        </section>
-
-        <div className="grid classroom-controls">
-          <section className="panel">
-            <p className="eyebrow">OCCUPANCY CONTROL</p>
-            <h2>Simulate people in room</h2>
-            <p style={{ marginTop: 8, color: "#94a3b8", fontSize: 11 }}>
-              Use these controls as a stand-in until computer vision is connected.
-            </p>
-            <div className="occupancy-control">
-              <button
-                type="button"
-                className="round-control"
-                aria-label="Decrease occupancy"
-                disabled={occupancy === 0}
-                onClick={() => onOccupancyChange(occupancy - 1)}
-              >
-                <Minus size={18} />
-              </button>
-              <div className="occupancy-count">
-                <strong>{occupancy}</strong>
-                <span>people present</span>
-              </div>
-              <button
-                type="button"
-                className="round-control"
-                aria-label="Increase occupancy"
-                disabled={occupancy === CLASSROOM_CAPACITY}
-                onClick={() => onOccupancyChange(occupancy + 1)}
-              >
-                <Plus size={18} />
-              </button>
-            </div>
-            <div className="occupancy-track">
-              <span style={{ width: `${(occupancy / CLASSROOM_CAPACITY) * 100}%` }} />
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                color: "#64748b",
-                fontSize: 10,
-              }}
-            >
-              <span>Empty</span>
-              <span>Capacity: {CLASSROOM_CAPACITY}</span>
-            </div>
-          </section>
-
-          <section className="panel">
-            <p className="eyebrow">EQUIPMENT CONTROLS</p>
-            <h2>Room systems</h2>
-            <p style={{ marginTop: 8, color: "#94a3b8", fontSize: 11 }}>
-              Toggle equipment to update the virtual room and energy estimates.
-            </p>
-            <div className="equipment-toggle">
-              <div className="toggle-icon light">
-                <Lightbulb size={20} />
-              </div>
-              <div className="toggle-copy">
-                <strong>Classroom lights</strong>
-                <span>Assumed load: 400 W</span>
-                <button type="button" className="equipment-detail-link" onClick={() => setSelectedEquipment(selectedEquipment === "lights" ? null : "lights")}>Details</button>
-              </div>
-              <button
-                type="button"
-                className={`toggle ${lightsOn ? "enabled" : ""}`}
-                aria-pressed={lightsOn}
-                aria-label={`Turn classroom lights ${lightsOn ? "off" : "on"}`}
-                onClick={onToggleLights}
-              >
-                {lightsOn ? "ON" : "OFF"}
-              </button>
-            </div>
-            <div className="equipment-toggle">
-              <div className="toggle-icon cool">
-                <Snowflake size={20} />
-              </div>
-              <div className="toggle-copy">
-                <strong>Air conditioning</strong>
-                <span>Assumed load: 1,800 W</span>
-                <button type="button" className="equipment-detail-link" onClick={() => setSelectedEquipment(selectedEquipment === "ac" ? null : "ac")}>Details</button>
-              </div>
-              <button
-                type="button"
-                className={`toggle ${acOn ? "enabled" : ""}`}
-                aria-pressed={acOn}
-                aria-label={`Turn air conditioning ${acOn ? "off" : "on"}`}
-                onClick={onToggleAc}
-              >
-                {acOn ? "ON" : "OFF"}
-              </button>
-            </div>
-            {selectedEquipment && (
-              <div className="equipment-detail-panel" role="status">
-                <strong>{selectedEquipment === "lights" ? "Classroom lighting" : "Air conditioning"}</strong>
-                <span>{selectedEquipment === "lights" ? "Assumed fixture load: 400 W. The room illustration responds to this control." : `Assumed cooling load: 1,800 W. Current twin state: ${acOn ? "running" : "standby"}.`}</span>
-                <small>Illustrative equipment rating · energy is estimated, not metered.</small>
-              </div>
-            )}
-          </section>
-        </div>
-
-        <p className="footnote" style={{ marginTop: 0 }}>
-          This virtual classroom is an illustrative digital twin, not a live camera
-          feed. Occupancy is manually simulated, and energy effects are estimates
-          based on assumed equipment ratings.
-        </p>
-      </div>
     </section>
   );
 }

@@ -10,8 +10,16 @@ export function calculateEnergy({
   hours,
   lightPowerW = LIGHT_POWER_W,
   acPowerW = AC_POWER_W,
+  activeLights,
+  activeAcUnits,
 }) {
-  const powerW = (lightsOn ? lightPowerW : 0) + (acOn ? acPowerW : 0);
+  const lightLoad = activeLights == null
+    ? (lightsOn ? lightPowerW : 0)
+    : (Math.max(0, Math.min(10, activeLights)) * lightPowerW) / 10;
+  const acLoad = activeAcUnits == null
+    ? (acOn ? acPowerW : 0)
+    : (Math.max(0, Math.min(3, activeAcUnits)) * acPowerW) / 3;
+  const powerW = lightLoad + acLoad;
 
   return {
     totalPowerW: powerW,
@@ -36,7 +44,23 @@ export function calculateSavings({
 // Payload for the backend POST /simulate endpoint. Baseline assumes everything
 // runs for the full operating period; the simulated scenario zeroes any
 // equipment that has been switched off.
-export function buildSimulationPayload({ lightsOn, acOn, hours }) {
+export function buildSimulationPayload({ lightsOn, acOn, hours, lightUnits, acUnits }) {
+  if (Array.isArray(lightUnits) && Array.isArray(acUnits)) {
+    return [
+      ...lightUnits.map((enabled, index) => ({
+        name: `Classroom light ${index + 1}`,
+        power_watts: LIGHT_POWER_W / 10,
+        current_hours: hours,
+        simulated_hours: enabled ? hours : 0,
+      })),
+      ...acUnits.map((enabled, index) => ({
+        name: `Classroom AC ${index + 1}`,
+        power_watts: AC_POWER_W / 3,
+        current_hours: hours,
+        simulated_hours: enabled ? hours : 0,
+      })),
+    ];
+  }
   return [
     {
       name: "Classroom lights",

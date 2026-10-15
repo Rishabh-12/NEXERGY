@@ -4,7 +4,6 @@ export default function SimulationChart({ baselineKwh = 4.4, simulatedKwh = 4.4 
   const saved = Math.max(0, baseline - simulated);
   const percent = baseline > 0 ? (saved / baseline) * 100 : 0;
   const max = Math.max(baseline, simulated, 0.1);
-
   const barHeight = (value) => `${Math.max(4, (value / max) * 158)}px`;
 
   return (
@@ -23,12 +22,12 @@ export default function SimulationChart({ baselineKwh = 4.4, simulatedKwh = 4.4 
       <div className="chart-wrap">
         <div className="bar-col">
           <div className="bar-value">{baseline.toFixed(2)} kWh</div>
-          <div className="bar" style={{ "--height": barHeight(baseline) }} />
+          <div className="bar" key={`baseline-${baseline.toFixed(3)}`} style={{ "--height": barHeight(baseline) }} />
           <div className="bar-label">Before optimization</div>
         </div>
         <div className="bar-col">
           <div className="bar-value">{simulated.toFixed(2)} kWh</div>
-          <div className="bar green" style={{ "--height": barHeight(simulated) }} />
+          <div className="bar green" key={`scenario-${simulated.toFixed(3)}`} style={{ "--height": barHeight(simulated) }} />
           <div className="bar-label">After optimization</div>
         </div>
       </div>

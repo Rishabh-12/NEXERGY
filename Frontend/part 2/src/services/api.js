@@ -1,4 +1,5 @@
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(
+const DEFAULT_API_URL = import.meta.env.PROD ? "https://nexenergy-api.onrender.com" : "http://localhost:8000";
+const API_URL = (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(
   /\/$/,
   "",
 );
@@ -70,6 +71,8 @@ export function fetchAiInsight(params = {}) {
       ac_on: params.acOn,
       ac_setpoint_c: params.setpoint,
       operating_hours: params.hours,
+      user_question: params.question,
+      room_name: params.roomName,
     }),
   });
 }

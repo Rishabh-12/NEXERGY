@@ -5,6 +5,8 @@ import DigitalClassroom from "./Components/DigitalClassroom";
 import LiveCamera from "./Components/LiveCamera";
 import SimulationPanel from "./Components/simulationPanel";
 import Recommendations from "./Components/Recommendations";
+import EnergyChat from "./Components/EnergyChat";
+import { FLOORS } from "./Components/campusData";
 import {
   getRoomState,
   sendOccupancy,
@@ -38,14 +40,26 @@ const POLL_INTERVAL_MS = 4000;
 const LOCAL_CHANGE_GRACE_MS = 2000;
 
 const clampOccupancy = (n) => Math.min(CLASSROOM_CAPACITY, Math.max(0, n));
+const initialRoomEquipment = Object.fromEntries(
+  FLOORS.flatMap((floor) => floor.rooms).map((room) => [room.id, {
+    lights: Array(10).fill(true),
+    acs: Array(3).fill(true),
+  }]),
+);
+const initialSampleOccupancy = Object.fromEntries(
+  FLOORS.flatMap((floor) => floor.rooms).map((room) => [room.id, room.people]),
+);
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
+  const [selectedRoom, setSelectedRoom] = useState("A-101");
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("nexergy-theme") === "dark" ? "dark" : "light"; }
     catch { return "light"; }
   });
   const [settings, setSettings] = useState(INITIAL_SETTINGS);
+  const [roomEquipment, setRoomEquipment] = useState(initialRoomEquipment);
+  const [sampleOccupancy, setSampleOccupancy] = useState(initialSampleOccupancy);
   const [applied, setApplied] = useState(INITIAL_APPLIED);
   const [applying, setApplying] = useState(false);
   const [backend, setBackend] = useState({ status: "checking", message: "", energyWasteAlert: false });
@@ -65,9 +79,23 @@ export default function App() {
   }, []);
 
   const updateSettings = useCallback(
-    (patch) => setSettings((current) => ({ ...current, ...patch })),
+    (patch) => {
+      setSettings((current) => ({ ...current, ...patch }));
+      if (typeof patch.lightsOn === "boolean") setRoomEquipment((current) => ({ ...current, "A-101": { ...current["A-101"], lights: Array(10).fill(patch.lightsOn) } }));
+      if (typeof patch.acOn === "boolean") setRoomEquipment((current) => ({ ...current, "A-101": { ...current["A-101"], acs: Array(3).fill(patch.acOn) } }));
+    },
     [],
   );
+
+  const updateRoomEquipment = useCallback((roomId, patch) => {
+    setRoomEquipment((current) => ({ ...current, [roomId]: { ...current[roomId], ...patch } }));
+    if (roomId === "A-101" && Array.isArray(patch.lights)) setSettings((current) => ({ ...current, lightsOn: patch.lights.some(Boolean) }));
+    if (roomId === "A-101" && Array.isArray(patch.acs)) setSettings((current) => ({ ...current, acOn: patch.acs.some(Boolean) }));
+  }, []);
+
+  const updateSampleOccupancy = useCallback((roomId, count) => {
+    setSampleOccupancy((current) => ({ ...current, [roomId]: clampOccupancy(count) }));
+  }, []);
 
   // Keep the occupancy in sync with the backend, so counts pushed to
   // /update-occupancy (e.g. by the computer-vision service) show up here.
@@ -94,8 +122,9 @@ export default function App() {
           acOn: typeof state.AC === "boolean" ? state.AC : null,
           lightsOn: typeof state.Lights === "boolean" ? state.Lights : null,
         };
-        if (lastRoomState.current) {
-          const previous = lastRoomState.current;
+        const previousRoomState = lastRoomState.current;
+        if (previousRoomState) {
+          const previous = previousRoomState;
           if (observed.occupancy !== null && observed.occupancy !== previous.occupancy) {
             recordEvent("room", "Room state updated", `${observed.occupancy} ${observed.occupancy === 1 ? "person" : "people"} reported by the room-state endpoint.`, "BACKEND");
           }
@@ -110,6 +139,9 @@ export default function App() {
 
         const recentlyChanged =
           Date.now() - lastLocalChange.current < LOCAL_CHANGE_GRACE_MS;
+        if (!recentlyChanged && observed.acOn !== null && previousRoomState && observed.acOn !== previousRoomState.acOn) {
+          setRoomEquipment((current) => ({ ...current, "A-101": { ...current["A-101"], acs: Array(3).fill(observed.acOn) } }));
+        }
         if (!recentlyChanged && Number.isFinite(state.people_count)) {
           const count = clampOccupancy(state.people_count);
           setSettings((s) => {
@@ -149,24 +181,21 @@ export default function App() {
     }
   }, []);
 
-  const changeEquipment = useCallback((key) => {
-    const next = !settings[key];
-    updateSettings({ [key]: next });
-    recordEvent("local", "Twin control changed", `${key === "lightsOn" ? "Classroom lighting" : "Air conditioning"} set ${next ? "on" : "off"} in this interface.`, "INTERFACE");
-  }, [settings, updateSettings, recordEvent]);
-
   // Live (not yet applied) estimates for the current switches and hours.
-  const baselineEnergy = calculateEnergy({ lightsOn: true, acOn: true, hours: settings.hours });
+  const selectedEquipment = roomEquipment["A-101"];
+  const baselineEnergy = calculateEnergy({ lightsOn: true, acOn: true, hours: settings.hours, activeLights: 10, activeAcUnits: 3 });
   const simulatedEnergy = calculateEnergy({
     lightsOn: settings.lightsOn,
     acOn: settings.acOn,
     hours: settings.hours,
+    activeLights: selectedEquipment.lights.filter(Boolean).length,
+    activeAcUnits: selectedEquipment.acs.filter(Boolean).length,
   });
 
   async function applySimulation() {
     setApplying(true);
     try {
-      const result = await runSimulation(buildSimulationPayload(settings));
+      const result = await runSimulation(buildSimulationPayload({ ...settings, lightUnits: selectedEquipment.lights, acUnits: selectedEquipment.acs }));
       setApplied({
         simulated: result.simulated_energy_kwh,
         savings: result.energy_saved_kwh,
@@ -205,6 +234,10 @@ export default function App() {
             onNavigate={setPage}
             backend={backend}
             events={events}
+            selectedRoom={selectedRoom}
+            onSelectRoom={setSelectedRoom}
+            roomEquipment={roomEquipment}
+            roomOccupancy={sampleOccupancy}
           />
         )}
 
@@ -213,9 +246,12 @@ export default function App() {
             settings={settings}
             backend={backend}
             onOccupancyChange={changeOccupancy}
-            onToggleLights={() => changeEquipment("lightsOn")}
-            onToggleAc={() => changeEquipment("acOn")}
-            onNavigate={setPage}
+            selectedRoom={selectedRoom}
+            onSelectRoom={setSelectedRoom}
+            roomEquipmentByRoom={roomEquipment}
+            roomOccupancy={sampleOccupancy}
+            onSampleOccupancyChange={updateSampleOccupancy}
+            onRoomEquipmentChange={updateRoomEquipment}
           />
         )}
 
@@ -246,6 +282,16 @@ export default function App() {
         )}
 
       </main>
+      <EnergyChat
+        settings={settings}
+        backend={backend}
+        selectedRoom={selectedRoom}
+        applied={applied}
+        baselineEnergy={baselineEnergy.energyKwh}
+        simulatedEnergy={simulatedEnergy.energyKwh}
+        roomEquipment={roomEquipment[selectedRoom]}
+        roomOccupancy={sampleOccupancy}
+      />
     </>
   );
 }
