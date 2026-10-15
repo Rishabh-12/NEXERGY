@@ -4,15 +4,15 @@ import { FLOORS, getRoomSnapshot } from "./campusData";
 const PROFILE = [0.35, 0.58, 0.78, 1, 0.9, 0.7, 0.48, 0.21];
 const PERIODS = ["08", "09", "10", "11", "12", "13", "14", "15"];
 
-export default function CampusOverview({ backend, settings, onNavigate, selectedRoom = "A-101", onSelectRoom, variant = "overview" }) {
+export default function CampusOverview({ backend, settings, roomEquipment, roomOccupancy, onNavigate, selectedRoom = "A-101", onSelectRoom, variant = "overview" }) {
   const activeFloor = Number(selectedRoom.split("-")[1]?.[0]) || 1;
-  const room = getRoomSnapshot(selectedRoom, settings);
+  const room = getRoomSnapshot(selectedRoom, settings, roomEquipment?.[selectedRoom], roomOccupancy?.[selectedRoom]);
   const connected = room.connected;
   const energy = room.energyKwh;
   const occupancy = room.occupancy;
   const campusRooms = FLOORS.flatMap((floor) => floor.rooms);
-  const campusOccupancy = campusRooms.reduce((sum, item) => sum + getRoomSnapshot(item.id, settings).occupancy, 0);
-  const campusEnergy = campusRooms.reduce((sum, item) => sum + getRoomSnapshot(item.id, settings).energyKwh, 0);
+  const campusOccupancy = campusRooms.reduce((sum, item) => sum + getRoomSnapshot(item.id, settings, roomEquipment?.[item.id], roomOccupancy?.[item.id]).occupancy, 0);
+  const campusEnergy = campusRooms.reduce((sum, item) => sum + getRoomSnapshot(item.id, settings, roomEquipment?.[item.id], roomOccupancy?.[item.id]).energyKwh, 0);
   const energyBars = PROFILE.map((weight) => energy * weight / PROFILE.reduce((sum, value) => sum + value, 0));
 
   function chooseFloor(nextFloor) {
@@ -47,12 +47,12 @@ export default function CampusOverview({ backend, settings, onNavigate, selected
                   <div className="floor-room-strip">
                     {item.rooms.map((unit) => (
                       <button type="button" key={unit.id} aria-pressed={unit.id === selectedRoom} className={`floor-room ${unit.id === selectedRoom ? "room-selected" : ""} ${unit.id === "A-101" ? "room-connected" : ""}`} onClick={() => onSelectRoom?.(unit.id)}>
-                        <span className="room-window"/><strong>{unit.id}</strong><small>{unit.name}</small><small className="room-occupancy-label">{getRoomSnapshot(unit.id, settings).occupancy} people</small>
+                        <span className="room-window"/><strong>{unit.id}</strong><small>{unit.name}</small><small className="room-occupancy-label">{getRoomSnapshot(unit.id, settings, roomEquipment?.[unit.id], roomOccupancy?.[unit.id]).occupancy} people</small>
                         {unit.id === "A-101" && <i aria-label="Connected"/>}
                       </button>
                     ))}
                   </div>
-                  <span className="floor-energy-mark"><Zap size={11}/>{item.rooms.reduce((sum, unit) => sum + getRoomSnapshot(unit.id, settings).energyKwh, 0).toFixed(1)} <small>kWh est.</small></span>
+                  <span className="floor-energy-mark"><Zap size={11}/>{item.rooms.reduce((sum, unit) => sum + getRoomSnapshot(unit.id, settings, roomEquipment?.[unit.id], roomOccupancy?.[unit.id]).energyKwh, 0).toFixed(1)} <small>kWh est.</small></span>
                 </div>
               ))}
             </div>

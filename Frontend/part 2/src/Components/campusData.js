@@ -18,16 +18,25 @@ export const FLOORS = [
   ] },
 ];
 
-export function getRoomSnapshot(roomId, settings) {
+export function getRoomSnapshot(roomId, settings, equipment, occupancyOverride) {
   const room = FLOORS.flatMap((floor) => floor.rooms).find((item) => item.id === roomId) || FLOORS[0].rooms[0];
   const connected = room.id === "A-101";
+  const activeLoadFraction = equipment
+    ? ((equipment.lights?.filter(Boolean).length ?? 10) * 40 + (equipment.acs?.filter(Boolean).length ?? 3) * 600) / 2200
+    : 1;
   return {
     ...room,
     connected,
     energyKwh: connected
-      ? calculateEnergy({ lightsOn: settings.lightsOn, acOn: settings.acOn, hours: settings.hours }).energyKwh
-      : room.kwh,
-    occupancy: connected ? settings.occupancy : room.people,
+      ? calculateEnergy({
+        lightsOn: settings.lightsOn,
+        acOn: settings.acOn,
+        hours: settings.hours,
+        activeLights: equipment?.lights?.filter(Boolean).length,
+        activeAcUnits: equipment?.acs?.filter(Boolean).length,
+      }).energyKwh
+      : room.kwh * activeLoadFraction,
+    occupancy: connected ? settings.occupancy : (occupancyOverride ?? room.people),
     lightsOn: connected ? settings.lightsOn : true,
     acOn: connected ? settings.acOn : true,
   };

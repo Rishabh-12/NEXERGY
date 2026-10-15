@@ -7,16 +7,14 @@ import CampusOverview from "./CampusOverview";
 
 const allOn = (length, enabled) => Array.from({ length }, () => enabled);
 
-export default function DigitalClassroom({ settings, backend, onOccupancyChange, onToggleLights, onToggleAc, selectedRoom, onSelectRoom }) {
+export default function DigitalClassroom({ settings, backend, onOccupancyChange, roomEquipmentByRoom, roomOccupancy, onSampleOccupancyChange, onRoomEquipmentChange, selectedRoom, onSelectRoom }) {
   const [viewingRoomId, setViewingRoomId] = useState(null);
-  const [localOccupancy, setLocalOccupancy] = useState({});
-  const [lightsByRoom, setLightsByRoom] = useState({});
-  const [acsByRoom, setAcsByRoom] = useState({});
   const [setpoints, setSetpoints] = useState({});
-  const snapshot = getRoomSnapshot(selectedRoom, settings);
-  const lights = lightsByRoom[selectedRoom] ?? allOn(10, snapshot.lightsOn);
-  const acs = acsByRoom[selectedRoom] ?? allOn(3, snapshot.acOn);
-  const occupancy = snapshot.connected ? settings.occupancy : (localOccupancy[selectedRoom] ?? snapshot.occupancy);
+  const snapshot = getRoomSnapshot(selectedRoom, settings, roomEquipmentByRoom?.[selectedRoom], roomOccupancy?.[selectedRoom]);
+  const roomEquipment = roomEquipmentByRoom?.[selectedRoom];
+  const lights = roomEquipment?.lights ?? allOn(10, snapshot.lightsOn);
+  const acs = roomEquipment?.acs ?? allOn(3, snapshot.acOn);
+  const occupancy = snapshot.occupancy;
   const setpoint = setpoints[selectedRoom] ?? settings.setpoint ?? 22;
   const activeFloor = FLOORS.find((floor) => floor.rooms.some((room) => room.id === selectedRoom));
   const watts = lights.filter(Boolean).length * 40 + acs.filter(Boolean).length * 600;
@@ -26,18 +24,16 @@ export default function DigitalClassroom({ settings, backend, onOccupancyChange,
   const roomLabel = useMemo(() => `${activeFloor?.label ?? "Campus"} · ${snapshot.name}`, [activeFloor, snapshot.name]);
   const toggleLight = (index) => {
     const next = lights.map((on, i) => i === index ? !on : on);
-    setLightsByRoom((current) => ({ ...current, [selectedRoom]: next }));
-    if (snapshot.connected && next.every(Boolean) !== lights.every(Boolean)) onToggleLights();
+    onRoomEquipmentChange(selectedRoom, { lights: next });
   };
   const toggleAc = (index) => {
     const next = acs.map((on, i) => i === index ? !on : on);
-    setAcsByRoom((current) => ({ ...current, [selectedRoom]: next }));
-    if (snapshot.connected && (next.every(Boolean) !== acs.every(Boolean))) onToggleAc();
+    onRoomEquipmentChange(selectedRoom, { acs: next });
   };
   const setPeople = (next) => {
     const count = Math.max(0, Math.min(CLASSROOM_CAPACITY, next));
     if (snapshot.connected) onOccupancyChange(count);
-    else setLocalOccupancy((current) => ({ ...current, [selectedRoom]: count }));
+    else onSampleOccupancyChange(selectedRoom, count);
   };
 
   return (
@@ -45,7 +41,7 @@ export default function DigitalClassroom({ settings, backend, onOccupancyChange,
       <PageHeader eyebrow="DIGITAL TWIN" title="Digital Twin" subtitle="Explore a three-level campus model, enter a room, and inspect its occupancy and estimated equipment load." />
       {!roomView ? (
         <div className="twin-overview-mode">
-          <CampusOverview backend={backend} settings={settings} selectedRoom={selectedRoom} onSelectRoom={onSelectRoom} variant="twin" />
+          <CampusOverview backend={backend} settings={settings} roomEquipment={roomEquipmentByRoom} roomOccupancy={roomOccupancy} selectedRoom={selectedRoom} onSelectRoom={onSelectRoom} variant="twin" />
           <section className="panel twin-entry-panel">
             <div><p className="eyebrow">ROOM SELECTION · {selectedRoom}</p><h2>{snapshot.name}</h2><p>Open the selected room to inspect its seating, ten ceiling lights, and three independently controlled AC units.</p></div>
             <div className="twin-entry-metrics"><span><Users size={15}/>{occupancy} / {CLASSROOM_CAPACITY} people</span><span><Zap size={15}/>{watts} W estimated</span></div>

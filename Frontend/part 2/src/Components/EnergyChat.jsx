@@ -4,34 +4,45 @@ import { getRoomSnapshot } from "./campusData";
 import { sendGeminiChat } from "../services/geminiChat";
 
 const STORAGE_KEY = "nexergy-gemini-api-key";
-const SUGGESTIONS = ["Why is energy high?", "How do I optimize AC usage?", "Summarize potential savings"];
+const SUGGESTIONS = ["Why is energy high in this room?", "What does detect.py measure?", "How can I optimize AC use?", "Summarize this scenario's savings"];
 
 function readKey() {
   try { return sessionStorage.getItem(STORAGE_KEY) || ""; }
   catch { return ""; }
 }
 
-function makeTelemetry({ settings, selectedRoom, backend, applied, baselineEnergy, simulatedEnergy }) {
-  const room = getRoomSnapshot(selectedRoom, settings);
+function makeTelemetry({ settings, selectedRoom, backend, applied, baselineEnergy, simulatedEnergy, roomEquipment, roomOccupancy }) {
+  const room = getRoomSnapshot(selectedRoom, settings, roomEquipment, roomOccupancy?.[selectedRoom]);
+  const connected = room.connected;
+  const activeLights = roomEquipment?.lights?.filter(Boolean).length ?? (room.lightsOn ? 10 : 0);
+  const activeAcUnits = roomEquipment?.acs?.filter(Boolean).length ?? (room.acOn ? 3 : 0);
+  const estimatedEnergy = connected ? (simulatedEnergy ?? room.energyKwh) : room.energyKwh;
+  const appliedMatchesCurrent = connected && applied?.source && Math.abs((applied.simulated ?? Infinity) - (simulatedEnergy ?? 0)) < 0.005;
+  const energyEstimateBasis = connected ? `estimate for ${settings.hours} configured operating hours` : "sample room profile estimate per day";
   return {
     room: `${selectedRoom} · ${room.name}`,
+    building: "Building A · 3 floors · 9 modeled rooms",
     occupancy: {
       count: room.occupancy,
-      source: room.connected && backend?.status === "online" ? "live people count" : "sample estimate",
+      source: connected && backend?.status === "online" ? "backend room-state API; may be CV-fed or manually simulated" : "sample estimate",
     },
-    lighting: `${settings.lightsOn ? 10 : 0} of 10 modeled lights active`,
-    airConditioning: `${settings.acOn ? 2 : 0} of 2 modeled AC units active`,
-    estimatedEnergyKwhPerDay: Number(room.energyKwh.toFixed(2)),
-    baselineEnergyKwh: Number((baselineEnergy ?? 0).toFixed(2)),
-    currentScenarioEnergyKwh: Number((simulatedEnergy ?? room.energyKwh).toFixed(2)),
-    simulationSavingsKwh: Number((applied?.savings ?? 0).toFixed(2)),
-    estimatedDailyCostRupees: Number((room.energyKwh * 8).toFixed(2)),
-    acSetpointC: settings.setpoint,
-    operatingHours: settings.hours,
-    potentialWasteAlert: room.connected ? Boolean(backend?.energyWasteAlert) : false,
-    dataNote: room.connected
-      ? "Occupancy may be live. Energy and savings are model estimates, not meter readings."
-      : "Room occupancy and energy values are sample estimates, not live telemetry or meter readings.",
+    lighting: `${activeLights} of 10 modeled lights active (assumed 40 W each)`,
+    airConditioning: `${activeAcUnits} of 3 modeled AC units active (assumed 600 W each)`,
+    modeledEquipmentLoadW: activeLights * 40 + activeAcUnits * 600,
+    estimatedEnergyKwh: Number(estimatedEnergy.toFixed(2)),
+    energyEstimateBasis,
+    baselineEnergyKwh: connected ? Number((baselineEnergy ?? 0).toFixed(2)) : null,
+    currentScenarioEnergyKwh: connected ? Number((simulatedEnergy ?? room.energyKwh).toFixed(2)) : room.energyKwh,
+    simulationSavingsKwh: appliedMatchesCurrent ? Number((applied.savings ?? 0).toFixed(2)) : null,
+    simulationResultStatus: !connected ? "No A-101 simulation is applied to this sample room." : !applied?.source ? "No simulation has been applied yet." : appliedMatchesCurrent ? "The applied simulation matches the current equipment settings." : "The equipment settings changed after the last applied simulation; apply it again for current savings.",
+    estimatedScenarioCostRupees: Number((estimatedEnergy * 8).toFixed(2)),
+    acSetpointC: connected ? settings.setpoint : null,
+    operatingHours: connected ? settings.hours : null,
+    potentialWasteAlert: connected ? Boolean(backend?.energyWasteAlert) : false,
+    projectWorkflow: "Person-only occupancy detection via detect.py → energy estimation from equipment assumptions → multi-floor digital twin → what-if simulation → recommendations.",
+    dataNote: connected
+      ? "A-101 occupancy comes from the backend room-state API and may be CV-fed or manually simulated. Energy, cost, and savings are estimates, never meter readings. The camera detects people; it does not measure electricity."
+      : "This room has no connected camera or meter in the app. Occupancy and energy values are sample estimates. The camera detects people; it does not measure electricity.",
   };
 }
 
@@ -40,14 +51,18 @@ function localAnswer(question, context) {
   const occupied = context.occupancy.count;
   const systems = `${context.lighting}; ${context.airConditioning}`;
   const savings = context.simulationSavingsKwh > 0
-    ? `${context.simulationSavingsKwh.toFixed(2)} kWh and about ₹${(context.simulationSavingsKwh * 8).toFixed(2)} per day`
-    : "no savings are recorded in the applied simulation yet";
+    ? `${context.simulationSavingsKwh.toFixed(2)} kWh and about ₹${(context.simulationSavingsKwh * 8).toFixed(2)} for the applied scenario`
+    : context.simulationSavingsKwh === null ? context.simulationResultStatus : "no savings are recorded in the applied simulation";
 
   if (/saving|summari|reduce|cost|benefit/.test(q)) {
-    return `For ${context.room}, the applied scenario shows ${savings}. Current use is estimated at ${context.estimatedEnergyKwhPerDay.toFixed(2)} kWh/day. ${context.dataNote}`;
+    return `For ${context.room}, the applied scenario shows ${savings}. Current use is estimated at ${context.estimatedEnergyKwh.toFixed(2)} kWh (${context.energyEstimateBasis}). ${context.dataNote}`;
+  }
+  if (/detect\.py|camera|vision|computer vision/.test(q)) {
+    return `The project uses detect.py for person-only occupancy detection. For ${context.room}, the app currently shows ${occupied} ${occupied === 1 ? "person" : "people"} from ${context.occupancy.source}. This helps identify an empty or occupied room, but the camera does not measure electricity or detect appliance power. ${context.dataNote}`;
   }
   if (/ac|cool|temperature|setpoint/.test(q)) {
-    return `The room is set to ${context.acSetpointC}°C with ${context.airConditioning}. Try a modest setpoint around 24–26°C, then compare the simulated use while keeping comfort and campus policy in mind. The room’s current ${context.estimatedEnergyKwhPerDay.toFixed(2)} kWh/day is an estimate. ${context.dataNote}`;
+    const target = context.acSetpointC == null ? "the selected room has no connected AC setpoint" : `the current setpoint is ${context.acSetpointC}°C`;
+    return `For ${context.room}, ${target} and ${context.airConditioning}. Try a modest setpoint around 24–26°C, then compare the simulated use while keeping comfort and campus policy in mind. Energy is not metered. ${context.dataNote}`;
   }
   if (/light|empty|occup|presence/.test(q)) {
     const suggestion = occupied === 0
@@ -57,12 +72,13 @@ function localAnswer(question, context) {
   }
   if (/high|energy|consum|waste/.test(q)) {
     const alert = context.potentialWasteAlert ? "The connected room service also reports a potential energy-waste alert. " : "";
-    return `${context.room} is estimated at ${context.estimatedEnergyKwhPerDay.toFixed(2)} kWh/day with ${occupied} people shown and ${systems}. ${alert}Compare the current schedule and equipment settings in the simulator; the app does not measure electricity with its camera. ${context.dataNote}`;
+    return `${context.room} is estimated at ${context.estimatedEnergyKwh.toFixed(2)} kWh (${context.energyEstimateBasis}) with ${occupied} people shown and ${systems}. ${alert}Compare the current schedule and equipment settings in the simulator; the app does not measure electricity with its camera. ${context.dataNote}`;
   }
-  return `For ${context.room}, the current estimate is ${context.estimatedEnergyKwhPerDay.toFixed(2)} kWh/day with ${occupied} people shown. The scenario uses ${systems}, a ${context.acSetpointC}°C AC setpoint, and ${context.operatingHours} operating hours. Ask about AC, lighting, occupancy, or savings to explore it. ${context.dataNote}`;
+    const scenario = context.acSetpointC == null ? "the selected room uses sample controls" : `the scenario uses a ${context.acSetpointC}°C AC setpoint and ${context.operatingHours} operating hours`;
+    return `For ${context.room}, the current estimate is ${context.estimatedEnergyKwh.toFixed(2)} kWh (${context.energyEstimateBasis}) with ${occupied} people shown. The model shows ${systems}; ${scenario}. Ask about the detect.py occupancy workflow, AC, lighting, or savings to explore it. ${context.dataNote}`;
 }
 
-export default function EnergyChat({ settings, backend, selectedRoom, applied, baselineEnergy, simulatedEnergy }) {
+export default function EnergyChat({ settings, backend, selectedRoom, applied, baselineEnergy, simulatedEnergy, roomEquipment, roomOccupancy }) {
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [apiKey, setApiKey] = useState(readKey);
@@ -103,7 +119,7 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
     setQuestion("");
     setMessages(nextHistory);
     setSending(true);
-    const context = makeTelemetry({ settings, selectedRoom, backend, applied, baselineEnergy, simulatedEnergy });
+    const context = makeTelemetry({ settings, selectedRoom, backend, applied, baselineEnergy, simulatedEnergy, roomEquipment, roomOccupancy });
     try {
       if (!apiKey) {
         setMessages([...nextHistory, { role: "assistant", text: localAnswer(text, context), source: "Local energy assistant · add a Gemini key for generative chat" }]);
@@ -112,11 +128,12 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
         setMessages([...nextHistory, { role: "assistant", text: answer, source: "Gemini · live room context" }]);
         setApiStatus("connected");
       }
-    } catch {
+    } catch (error) {
       setApiStatus("error");
+      const errorMessage = error instanceof Error ? error.message.slice(0, 180) : "network or API error";
       setMessages([...nextHistory, {
         role: "assistant",
-        text: `${localAnswer(text, context)}\n\nGemini could not be reached, so this answer was generated locally. Check the key, model access, and network connection in Settings.`,
+        text: `${localAnswer(text, context)}\n\nGemini could not be reached (${errorMessage}). This is the local fallback; check the API key, model access, quota, and network connection in Settings.`,
         source: "Local fallback",
       }]);
     } finally {
@@ -124,7 +141,8 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
     }
   }
 
-  const room = getRoomSnapshot(selectedRoom, settings);
+  const room = getRoomSnapshot(selectedRoom, settings, roomEquipment, roomOccupancy?.[selectedRoom]);
+  const currentRoomEnergy = room.connected ? (simulatedEnergy ?? room.energyKwh) : room.energyKwh;
   const status = apiStatus === "connected" ? "Gemini connected" : apiStatus === "ready" ? "Gemini ready" : apiStatus === "error" ? "Gemini unavailable · local answers" : "Local energy assistant";
 
   return (
@@ -137,12 +155,12 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
           <button type="button" aria-label="Minimize chat" onClick={() => setOpen(false)}><Minimize2 size={15}/></button>
           <button type="button" aria-label="Close chat" onClick={() => setOpen(false)}><X size={16}/></button>
         </header>
-        <div className="energy-chat-context"><Sparkles size={13}/> <span>ROOM</span><strong>{selectedRoom}</strong><span className="chat-context-energy">{room.energyKwh.toFixed(2)} kWh est.</span></div>
+        <div className="energy-chat-context"><Sparkles size={13}/> <span>ROOM</span><strong>{selectedRoom}</strong><span className="chat-context-energy">{currentRoomEnergy.toFixed(2)} kWh est.</span></div>
         <div className="energy-chat-messages" ref={listRef} aria-live="polite">
           {messages.map((message, index) => <article className={`chat-message ${message.role}`} key={`${message.role}-${index}`}><div>{message.text}</div>{message.source && <small>{message.source}</small>}</article>)}
           {sending && <article className="chat-message assistant" aria-label="NexEnergy is thinking"><div className="chat-typing"><i/><i/><i/></div></article>}
         </div>
-        {messages.length === 1 && <div className="energy-chat-suggestions">{SUGGESTIONS.map((suggestion) => <button type="button" key={suggestion} onClick={() => sendQuestion(suggestion)}>{suggestion}</button>)}</div>}
+        <div className="energy-chat-suggestions" aria-label="Suggested questions">{SUGGESTIONS.map((suggestion) => <button type="button" key={suggestion} disabled={sending} onClick={() => sendQuestion(suggestion)}>{suggestion}</button>)}</div>
         <form className="energy-chat-form" onSubmit={(event) => { event.preventDefault(); sendQuestion(); }}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about energy or this room…" aria-label="Ask NexEnergy a question" disabled={sending}/><button type="submit" aria-label="Send message" disabled={!question.trim() || sending}><Send size={16}/></button></form>
         <p className="energy-chat-disclaimer">Estimates are not meter readings. Your key is used only in this tab and sent directly to Google Gemini.</p>
       </section>}
