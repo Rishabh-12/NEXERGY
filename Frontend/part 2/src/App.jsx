@@ -5,6 +5,7 @@ import DigitalClassroom from "./Components/DigitalClassroom";
 import LiveCamera from "./Components/LiveCamera";
 import SimulationPanel from "./Components/simulationPanel";
 import Recommendations from "./Components/Recommendations";
+import EnergyChat from "./Components/EnergyChat";
 import {
   getRoomState,
   sendOccupancy,
@@ -41,6 +42,7 @@ const clampOccupancy = (n) => Math.min(CLASSROOM_CAPACITY, Math.max(0, n));
 
 export default function App() {
   const [page, setPage] = useState("dashboard");
+  const [selectedRoom, setSelectedRoom] = useState("A-101");
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("nexergy-theme") === "dark" ? "dark" : "light"; }
     catch { return "light"; }
@@ -205,6 +207,8 @@ export default function App() {
             onNavigate={setPage}
             backend={backend}
             events={events}
+            selectedRoom={selectedRoom}
+            onSelectRoom={setSelectedRoom}
           />
         )}
 
@@ -216,6 +220,8 @@ export default function App() {
             onToggleLights={() => changeEquipment("lightsOn")}
             onToggleAc={() => changeEquipment("acOn")}
             onNavigate={setPage}
+            selectedRoom={selectedRoom}
+            onSelectRoom={setSelectedRoom}
           />
         )}
 
@@ -246,6 +252,14 @@ export default function App() {
         )}
 
       </main>
+      <EnergyChat
+        settings={settings}
+        backend={backend}
+        selectedRoom={selectedRoom}
+        applied={applied}
+        baselineEnergy={baselineEnergy.energyKwh}
+        simulatedEnergy={simulatedEnergy.energyKwh}
+      />
     </>
   );
 }

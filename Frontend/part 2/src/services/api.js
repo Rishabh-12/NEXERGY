@@ -70,6 +70,8 @@ export function fetchAiInsight(params = {}) {
       ac_on: params.acOn,
       ac_setpoint_c: params.setpoint,
       operating_hours: params.hours,
+      user_question: params.question,
+      room_name: params.roomName,
     }),
   });
 }

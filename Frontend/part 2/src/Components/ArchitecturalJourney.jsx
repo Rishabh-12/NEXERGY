@@ -9,39 +9,41 @@ const chapters = [
   { key: "recommendation", number: "05", label: "Choose the next step", title: "Make the next action clear.", body: "Review a recommendation grounded in the room state and the scenario you applied. Energy, cost and carbon values remain clearly labelled as estimates.", icon: Zap },
 ];
 
-function IsometricRoom({ settings, backend, stage }) {
+function IsometricBuilding({ settings, backend, stage, active }) {
   const occupancy = Math.min(12, Math.max(0, settings.occupancy || 0));
+  const focusedFloor = active >= 1 && active <= 3 ? active : 0;
+  const floors = [
+    { id: 3, y: 8, room: "A-301" },
+    { id: 2, y: 158, room: "A-201" },
+    { id: 1, y: 308, room: "A-101" },
+  ];
   return (
-    <div className={`journey-model stage-${stage}`} aria-label={`Illustrative isometric classroom. ${settings.occupancy} people, lights ${settings.lightsOn ? "on" : "off"}, air conditioning ${settings.acOn ? "on" : "off"}.`}>
+    <div className={`journey-model building-journey stage-${stage} building-step-${active}`} aria-label={`Illustrative three-floor campus building. Floor ${focusedFloor || "all floors"} in focus. ${settings.occupancy} people are shown in connected room A-101; energy values are estimates.`}>
       <div className="model-grid" />
-      <svg className="room-svg" viewBox="0 0 760 560" role="img" aria-hidden="true">
+      <svg className="room-svg building-svg" viewBox="0 0 760 540" role="img" aria-hidden="true">
         <defs>
-          <linearGradient id="floor" x1="0" x2="1" y1="0" y2="1"><stop stopColor="#d8d4ca"/><stop offset="1" stopColor="#aaa99f"/></linearGradient>
-          <linearGradient id="wall" x1="0" x2="1"><stop stopColor="#fffdf7"/><stop offset="1" stopColor="#ddd9ce"/></linearGradient>
-          <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%"><feGaussianBlur stdDeviation="16"/></filter>
+          <linearGradient id="tower-top" x1="0" x2="1" y1="0" y2="1"><stop stopColor="#fffdf7"/><stop offset="1" stopColor="#d8e2ef"/></linearGradient>
+          <linearGradient id="tower-wall" x1="0" x2="1"><stop stopColor="#eef0e9"/><stop offset="1" stopColor="#c8d0d1"/></linearGradient>
+          <filter id="tower-shadow" x="-30%" y="-30%" width="160%" height="180%"><feGaussianBlur stdDeviation="15"/></filter>
         </defs>
-        <ellipse cx="386" cy="457" rx="260" ry="50" fill="#233653" opacity=".13" filter="url(#shadow)"/>
-        <polygon points="145,300 380,167 625,302 385,441" fill="url(#floor)" stroke="#a7a69d" strokeWidth="2"/>
-        <polygon points="145,300 145,148 380,24 380,167" fill="url(#wall)" stroke="#c7c2b6" strokeWidth="2"/>
-        <polygon points="380,167 625,302 625,149 380,24" fill="#ece8de" stroke="#c7c2b6" strokeWidth="2"/>
-        <polygon points="380,167 380,24 625,149 625,302" fill="none" stroke="#2855d9" strokeWidth="2" opacity=".2"/>
-        <g className="model-windows"><polygon points="184,197 246,164 246,236 184,270" fill="#afd4e8" stroke="#f8f6ef" strokeWidth="8"/><path d="M215 180v74M184 233l62-34" stroke="#f8f6ef" strokeWidth="4"/><polygon points="270,150 332,117 332,188 270,222" fill="#afd4e8" stroke="#f8f6ef" strokeWidth="8"/><path d="M301 134v71M270 186l62-34" stroke="#f8f6ef" strokeWidth="4"/></g>
-        <g className="model-board"><polygon points="450,153 560,211 560,251 450,191" fill="#263d3a" stroke="#b6b3a8" strokeWidth="6"/><path d="M468 174l72 38M468 185l53 28" stroke="#d5dfd3" strokeWidth="3" opacity=".55"/></g>
-        <g className={`model-lights ${settings.lightsOn ? "is-on" : ""}`}>
-          {[0, 1, 2].map((i) => <g key={i}><polygon points={`${261 + i * 59},82 ${297 + i * 59},101 ${280 + i * 59},110 ${244 + i * 59},91`} fill={settings.lightsOn ? "#fff2bc" : "#b8b8af"} stroke="#fffdf7" strokeWidth="4"/><ellipse cx={272 + i * 59} cy="242" rx="52" ry="18" fill="#f1ca6d" opacity={settings.lightsOn ? ".14" : "0"}/></g>)}
-        </g>
-        <g className={`model-ac ${settings.acOn ? "is-on" : ""}`}><polygon points="479,95 552,134 552,158 479,119" fill={settings.acOn ? "#d4e7ef" : "#b4b8b7"} stroke="#a4abb0" strokeWidth="3"/><path d="M490 108l50 26M490 114l50 26M490 120l50 26" stroke="#75838b" strokeWidth="2"/></g>
-        {Array.from({ length: 12 }, (_, i) => {
-          const front = i % 4; const row = Math.floor(i / 4); const x = 235 + front * 58 + row * 28; const y = 286 + front * 10 + row * 53; const active = i < occupancy;
-          return <g className={`model-desk ${active ? "occupied" : ""}`} key={i} transform={`translate(${x} ${y})`}>
-            <polygon points="0,0 56,30 20,50 -36,20" fill="#ad8060" stroke="#86674e" strokeWidth="2"/><path d="M-27 21v30M15 44v29M48 29v29" stroke="#735a47" strokeWidth="4"/>
-            {active && <g className="model-person"><ellipse cx="5" cy="-10" rx="9" ry="12" fill="#2855d9"/><path d="M-7 2q12-14 24 0l5 27H-12Z" fill="#4a75e5"/><circle cx="5" cy="-13" r="8" fill="#d6a27e"/></g>}
-          </g>;
-        })}
+        <ellipse cx="385" cy="515" rx="220" ry="24" fill="#233653" opacity=".15" filter="url(#tower-shadow)"/>
+        {floors.map(({ id, y, room }) => <g className={`tower-floor ${focusedFloor === id ? "floor-focus" : ""}`} data-floor={id} key={id} transform={`translate(0 ${y})`}>
+          <g className="tower-floor-shell">
+            <polygon points="380,0 570,78 380,156 190,78" fill="url(#tower-top)" stroke="#aeb9c6" strokeWidth="2"/>
+            <polygon points="190,78 380,156 380,203 190,125" fill="url(#tower-wall)" stroke="#aeb9c6" strokeWidth="2"/>
+            <polygon points="380,156 570,78 570,125 380,203" fill="#d9dfdc" stroke="#aeb9c6" strokeWidth="2"/>
+            <polygon className="tower-floor-slab" points="190,125 380,203 570,125 380,149" fill="#91a2b3" stroke="#e5e8e4" strokeWidth="2"/>
+            <path d="M254 104l66 27v41l-66-27zM337 138l32 13v41l-32-13zM410 131l52-21v41l-52 21zM480 102l48-20v41l-48 20z" fill="#8fbdd0" stroke="#f7f6ef" strokeWidth="5"/>
+            <path d="M190 78l190 78 190-78M380 156v47" fill="none" stroke="#73859a" strokeWidth="2" opacity=".6"/>
+            <g className="tower-room-lights"><path d="M325 34l23 10-18 8-23-10zM372 54l23 10-18 8-23-10zM419 36l23 10-18 8-23-10z" fill={settings.lightsOn ? "#ffe6a3" : "#b7c0c4"}/></g>
+            {id === 1 && Array.from({ length: Math.min(3, occupancy) }, (_, i) => <g className="tower-person" key={i} transform={`translate(${300 + i * 34} ${145 + i * 10})`}><circle cy="-14" r="6" fill="#d6a27e"/><path d="M-7 -7q7-8 14 0l4 15H-10z" fill="#3868d4"/></g>)}
+            <text x="380" y="192" textAnchor="middle" className="tower-floor-number">0{id} · {room}</text>
+          </g>
+        </g>)}
       </svg>
-      <span className="model-label label-presence"><Users size={13}/>{settings.occupancy} {settings.occupancy === 1 ? "person" : "people"}</span>
-      <span className="model-label label-light"><Lightbulb size={13}/>{settings.lightsOn ? "Lighting on" : "Lighting off"}</span>
-      <span className="model-label label-cooling"><Snowflake size={13}/>{settings.acOn ? "Cooling active" : "Cooling off"}</span>
+      <span className="model-label label-presence"><Building2 size={13}/>03 FLOORS · 09 ROOMS</span>
+      <span className="model-label label-light"><Users size={13}/>{settings.occupancy} in A-101</span>
+      <span className="model-label label-cooling"><Zap size={13}/>{settings.lightsOn ? "Systems active" : "Systems reduced"}</span>
       <div className="model-status"><span className={`status-led ${backend?.status || "checking"}`} />{backend?.status === "online" ? "ROOM STATE CONNECTED" : "OFFLINE · LOCAL VIEW"}</div>
     </div>
   );
@@ -75,7 +77,7 @@ export default function ArchitecturalJourney({ settings, backend, applied, onNav
       </section>
       <section className="story-section" id="campus-story" aria-label="How the digital twin works">
         <div className="story-track">
-          <div className="story-visual"><div className="story-visual-top"><span>ROOM A-101</span><span>ILLUSTRATIVE DIGITAL TWIN</span></div><IsometricRoom settings={settings} backend={backend} stage={liveStage}/><div className="story-visual-foot"><span>MODEL STATE / {settings.lightsOn ? "LIGHTING ACTIVE" : "LIGHTING INACTIVE"}</span><span>01 — 05</span></div></div>
+        <div className="story-visual"><div className="story-visual-top"><span>BUILDING A · 03 LEVELS</span><span>SCROLL-DRIVEN DIGITAL TWIN</span></div><IsometricBuilding settings={settings} backend={backend} stage={liveStage} active={active}/><div className="story-visual-foot"><span>FLOOR {active >= 1 && active <= 3 ? `0${active}` : "01—03"} / {settings.lightsOn ? "SYSTEMS ACTIVE" : "SYSTEMS REDUCED"}</span><span>0{active + 1} — 05</span></div></div>
           <div className="story-chapters">{chapters.map(({ key, number, label, title, body, icon: Icon }, index) => <article className={`story-chapter ${active === index ? "is-current" : ""}`} key={key} data-chapter={index} ref={(node) => { chapterRefs.current[index] = node; }}><div className="chapter-meta"><span>{number} / 05</span><span><Icon size={14}/>{label}</span></div><h2>{title}</h2><p>{body}</p>{index === 0 && <button type="button" className="text-link" onClick={() => onNavigate("twin")}>Explore room A-101 <ArrowUpRight size={15}/></button>}{index === 3 && <button type="button" className="text-link" onClick={() => onNavigate("simulator")}>Open energy simulator <ArrowUpRight size={15}/></button>}{index === 4 && <button type="button" className="text-link" onClick={() => onNavigate("recommendations")}>View AI recommendations <ArrowUpRight size={15}/></button>}</article>)}</div>
         </div>
       </section>

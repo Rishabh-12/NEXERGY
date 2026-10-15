@@ -97,6 +97,8 @@ class SimulationAppliance(BaseModel):
     simulated_hours: float
 
 class InsightRequest(BaseModel):
+    user_question: Optional[str] = None
+    room_name: Optional[str] = None
     total_energy_kwh: Optional[float] = None
     total_daily_cost: Optional[float] = None
     people_count: Optional[int] = None
@@ -249,11 +251,19 @@ def generate_insight(data: InsightRequest):
     except Exception:
         pass
 
+    room_name = data.room_name or "Classroom A-101"
+    question_instruction = (
+        f"The user asks: {data.user_question.strip()}\nAnswer this specific question directly in 2–4 short sentences. "
+        "Use only the supplied room and energy context, explain that energy figures are estimates, and say when the available data cannot answer."
+        if data.user_question and data.user_question.strip()
+        else "Provide a concise, direct, and actionable 2-sentence energy recommendation for the facility manager. "
+        "If an energy waste alert is active or the room is empty while appliances run, give a clear urgent directive to power down specific idle equipment. If occupied, provide optimal setpoint and lighting guidance for student comfort and power savings."
+    )
     prompt = f"""You are NexEnergy Gemini AI, a smart campus energy management advisor.
 Analyze the following real-time computer vision detection and classroom telemetry:
 
 [LIVE COMPUTER VISION DATA]
-- Location: Classroom A-101
+- Location: {room_name}
 - People Detected: {people} {'person' if people == 1 else 'people'}
 - Room Status: {room_status}
 - Empty Room Duration: {empty_sec} seconds
@@ -268,8 +278,7 @@ Analyze the following real-time computer vision detection and classroom telemetr
 - Campus Historical Average (Past 5 days): {hist_avg_kwh:.1f} kWh/day (₹{hist_avg_cost:.1f}/day)
 
 Based on this computer vision detection and electrical telemetry:
-Provide a concise, direct, and actionable 2-sentence energy recommendation for the facility manager.
-If an energy waste alert is active or the room is empty while appliances run, give a clear urgent directive to power down specific idle equipment. If occupied, provide optimal setpoint and lighting guidance for student comfort and power savings."""
+{question_instruction}"""
 
     # Call Gemini AI with real-time computer vision and electrical telemetry
     gemini_res = call_gemini(prompt)
@@ -291,19 +300,25 @@ If an energy waste alert is active or the room is empty while appliances run, gi
         }
 
     # Intelligent data-driven fallback when API rate limit / quota is reached
-    if waste_alert or (people == 0 and (ac_status or lights_status)):
+    if data.user_question and data.user_question.strip():
         fallback = (
-            f"AI Computer Vision Alert: Classroom A-101 is vacant ({empty_sec}s empty) but cooling and lighting are still active. "
+            f"{room_name} currently has {people} {'person' if people == 1 else 'people'} and an estimated energy use of "
+            f"{energy_kwh:.2f} kWh for the selected period (about ₹{cost:.2f}). "
+            f"Lights are {'on' if lights_status else 'off'} and cooling is {'on' if ac_status else 'off'}; these are estimates unless live room telemetry is connected."
+        )
+    elif waste_alert or (people == 0 and (ac_status or lights_status)):
+        fallback = (
+            f"AI Computer Vision Alert: {room_name} is vacant ({empty_sec}s empty) but cooling and lighting are still active. "
             f"Immediately power down the AC and lighting to eliminate unnecessary ₹{cost:.2f}/day standby waste."
         )
     elif people > 0:
         fallback = (
-            f"AI Vision detected {people} occupants in Classroom A-101 (current load: {energy_kwh:.2f} kWh, ₹{cost:.2f}/day). "
+            f"AI Vision detected {people} occupants in {room_name} (current load: {energy_kwh:.2f} kWh, ₹{cost:.2f}/day). "
             f"Maintain cooling setpoint between 24–26°C to balance student comfort and reduce campus power draw by up to 15%."
         )
     else:
         fallback = (
-            f"Classroom A-101 is vacant and operating within optimal baseline efficiency ({energy_kwh:.2f} kWh, ₹{cost:.2f}/day). "
+            f"{room_name} is vacant and operating within optimal baseline efficiency ({energy_kwh:.2f} kWh, ₹{cost:.2f}/day). "
             "Continue automated occupancy scheduling."
         )
 

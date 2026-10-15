@@ -86,6 +86,7 @@ export default function Recommendations({ settings, applied, baseline, simulated
   // Backend results are only shown while they still match the current scenario.
   const remoteItems = remote && remote.key === scenarioKey ? remote.items : null;
   const items = remoteItems ?? localRecommendations({ settings, applied });
+  const currentInsight = aiInsight?.key === scenarioKey ? aiInsight : null;
 
   async function generate() {
     setLoading(true);
@@ -115,6 +116,7 @@ export default function Recommendations({ settings, applied, baseline, simulated
       if (insightResult.status === "fulfilled" && insightResult.value?.ai_insight) {
         const source = insightResult.value.source || "rules";
         setAiInsight({
+          key: scenarioKey,
           text: insightResult.value.ai_insight,
           source,
           model: insightResult.value.model || (source === "gemini" ? "Gemini" : "Not used"),
@@ -135,7 +137,7 @@ export default function Recommendations({ settings, applied, baseline, simulated
         eyebrow="SMART INSIGHTS"
         title="AI Recommendations"
         subtitle="Review explainable suggestions based on available room state, energy estimates, and the backend insight service."
-        pill={aiInsight ? (aiInsight.source === "gemini" ? "Gemini insight" : "Backend fallback") : (remoteItems ? "Backend rules" : "Local rules")}
+        pill={currentInsight ? (currentInsight.source === "gemini" ? "Gemini insight" : "Backend fallback") : (remoteItems ? "Backend rules" : "Local rules")}
       />
 
       <section className="panel">
@@ -147,12 +149,19 @@ export default function Recommendations({ settings, applied, baseline, simulated
               Recommendations use the current scenario and may come from the backend rules or its configured AI provider.
             </p>
           </div>
-          <span className="tiny-badge">Backend + local rules</span>
+          <span className="tiny-badge">{backend?.status === "online" ? "Live room context" : "Local context"}</span>
+        </div>
+
+        <div className="recommendation-context" aria-label="Current room context">
+          <article><span>Room occupancy</span><strong>{settings.occupancy}</strong><small>{settings.occupancy === 1 ? "person" : "people"} · {backend?.status === "online" ? "connected" : "local preview"}</small></article>
+          <article><span>Estimated energy</span><strong>{simulated.toFixed(2)} kWh</strong><small>for the selected period</small></article>
+          <article><span>Cooling setpoint</span><strong>{settings.setpoint}°C</strong><small>comfort and efficiency</small></article>
+          <article><span>Scenario savings</span><strong>{applied.savings.toFixed(2)} kWh</strong><small>estimated vs. baseline</small></article>
         </div>
 
         <button
           type="button"
-          className="primary action"
+          className="primary action recommendations-generate"
           disabled={loading}
           onClick={generate}
         >
@@ -162,7 +171,7 @@ export default function Recommendations({ settings, applied, baseline, simulated
 
         {notice && <p className="ai-message">{notice}</p>}
 
-        {aiInsight && (
+        {currentInsight && (
           <article className="rec-item rec-ai-item">
             <div className="rec-top" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -170,17 +179,17 @@ export default function Recommendations({ settings, applied, baseline, simulated
                   <Bot size={18} />
                 </div>
                 <span className="priority rec-ai-priority">
-                  {aiInsight.source === "gemini" ? "GOOGLE GEMINI AI INSIGHT" : "BACKEND RULE-BASED INSIGHT"}
+                  {currentInsight.source === "gemini" ? "GOOGLE GEMINI AI INSIGHT" : "BACKEND RULE-BASED INSIGHT"}
                 </span>
               </div>
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                 <span className="tiny-badge rec-ai-meta">
-                  Model: {aiInsight.model}
+                  Model: {currentInsight.model}
                 </span>
                 <span className="tiny-badge rec-ai-vision">
-                  Vision: {aiInsight.visionContext?.people_count ?? settings.occupancy} people
+                  Vision: {currentInsight.visionContext?.people_count ?? settings.occupancy} people
                 </span>
-                {(aiInsight.visionContext?.energy_waste_alert || backend?.energyWasteAlert) && (
+                {(currentInsight.visionContext?.energy_waste_alert || backend?.energyWasteAlert) && (
                   <span className="tiny-badge rec-ai-alert">
                     Waste Alert Active
                   </span>
@@ -188,15 +197,15 @@ export default function Recommendations({ settings, applied, baseline, simulated
               </div>
             </div>
             <h3 className="rec-ai-title">Live Camera & Energy Optimization Strategy</h3>
-            <p className="rec-ai-copy">{aiInsight.text}</p>
+            <p className="rec-ai-copy">{currentInsight.text}</p>
             <div className="action-box">
-              <strong>{aiInsight.source === "gemini" ? "GEMINI INSIGHT SOURCE" : "BACKEND FALLBACK SOURCE"}</strong>
-                {aiInsight.source === "gemini" ? "Generated by the configured Gemini service from the data supplied to the backend." : "Generated by the backend fallback from the available room and scenario state."}
+                <strong>{currentInsight.source === "gemini" ? "GEMINI INSIGHT SOURCE" : "BACKEND FALLBACK SOURCE"}</strong>
+                {currentInsight.source === "gemini" ? "Generated by the configured Gemini service from the data supplied to the backend." : "Generated by the backend fallback from the available room and scenario state."}
             </div>
           </article>
         )}
 
-        <div>
+        <div className="recommendation-list">
           {items.map((item, index) => {
             const Icon = ICONS[item.icon] ?? Sparkles;
             return (

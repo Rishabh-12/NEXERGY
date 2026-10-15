@@ -15,7 +15,7 @@ import ArchitecturalJourney from "./ArchitecturalJourney";
 import CampusOverview from "./CampusOverview";
 import EventTimeline from "./EventTimeline";
 
-export default function Dashboard({ settings, applied, baseline, onNavigate, backend, events }) {
+export default function Dashboard({ settings, applied, baseline, onNavigate, backend, events, selectedRoom, onSelectRoom }) {
   const [history, setHistory] = useState([]);
 
   useEffect(() => {
@@ -189,7 +189,7 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
       </section>
 
       <div className="dashboard-lower-grid">
-        <CampusOverview backend={backend} settings={settings} onNavigate={onNavigate}/>
+        <CampusOverview backend={backend} settings={settings} onNavigate={onNavigate} selectedRoom={selectedRoom} onSelectRoom={onSelectRoom}/>
         <EventTimeline events={events}/>
       </div>
 
