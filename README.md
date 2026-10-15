@@ -48,6 +48,17 @@ npm run dev
 
 Open [http://localhost:5173/](http://localhost:5173/) in your browser. The app connects to `http://localhost:8000` by default (set `VITE_API_URL` to configure custom host).
 
+## Publish the integrated site
+
+The frontend is published to GitHub Pages by `.github/workflows/deploy-pages.yml` after changes reach `main`. The FastAPI service runs separately from the static site and is described in `render.yaml`.
+
+1. In GitHub, open **Settings → Pages** for this repository and choose **GitHub Actions** as the publishing source.
+2. In Render, create a new Blueprint from this repository and select `render.yaml`. The API is created as `https://nexenergy-api.onrender.com`; if Render assigns a different hostname, add a repository variable named `VITE_API_URL` with that API URL before the Pages workflow builds.
+3. Set `GEMINI_API_KEY` in the Render service environment if server-generated recommendations should use Gemini. The service has a rule-based fallback when no key is set.
+4. Once Pages is enabled, merge or push changes to `main` to publish. The site URL is `https://rishabh-12.github.io/code-cash/`.
+
+The API uses the configured `CORS_ORIGINS` value in `render.yaml`, which allows the published Pages origin and local Vite development. Render's free web service may sleep while idle; the first request after inactivity can take longer. YOLO camera inference requires sufficient memory and a working camera source. A cloud service cannot access a laptop's built-in camera; use the browser's **Live AI Camera** page to submit camera frames from the device instead. Energy values remain estimates unless connected meter data is available.
+
 ## How the Components Connect
 
 | Action / Feature | Endpoint |

@@ -56,10 +56,19 @@ try:
 except Exception:
     genai = None
 
-# CORS middleware for Frontend dashboard
+def configured_cors_origins() -> list[str]:
+    """Allow the deployed UI and local development origins to call this API."""
+    raw_origins = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
+    return [origin.strip().rstrip("/") for origin in raw_origins.split(",") if origin.strip()]
+
+
+# Keep API access limited to the configured frontend origins.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=configured_cors_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

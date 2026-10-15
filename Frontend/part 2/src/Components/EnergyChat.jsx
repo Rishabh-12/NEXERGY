@@ -92,6 +92,8 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
   const [apiStatus, setApiStatus] = useState(readKey() ? "ready" : "local");
   const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
+  const [typingReply, setTypingReply] = useState(null);
+  const [typingText, setTypingText] = useState("");
   const [messages, setMessages] = useState([
     { role: "assistant", text: readKey() ? "Hi, I’m NexEnergy. Gemini is ready for questions about this campus, room telemetry, and energy scenarios." : "Hi, I’m NexEnergy. I can answer room and energy questions locally; connect a Gemini key in the top-right settings for live generative answers." },
   ]);
@@ -100,7 +102,23 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
   useEffect(() => {
     if (!listRef.current) return;
     listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, sending]);
+  }, [messages, sending, typingText]);
+
+  useEffect(() => {
+    if (!typingReply) return undefined;
+    let cursor = 0;
+    const timer = window.setInterval(() => {
+      cursor = Math.min(typingReply.text.length, cursor + 4);
+      setTypingText(typingReply.text.slice(0, cursor));
+      if (cursor >= typingReply.text.length) {
+        window.clearInterval(timer);
+        setMessages([...typingReply.history, { role: "assistant", text: typingReply.text, source: typingReply.source }]);
+        setTypingReply(null);
+        setTypingText("");
+      }
+    }, 16);
+    return () => window.clearInterval(timer);
+  }, [typingReply]);
 
   function saveKey(event) {
     event.preventDefault();
@@ -118,34 +136,36 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
 
   async function sendQuestion(value = question) {
     const text = value.trim();
-    if (!text || sending) return;
+    if (!text || sending || typingReply) return;
     const nextHistory = [...messages, { role: "user", text }];
     setQuestion("");
     setMessages(nextHistory);
     setSending(true);
+    setTypingText("");
     const context = makeTelemetry({ settings, selectedRoom, backend, applied, baselineEnergy, simulatedEnergy, roomEquipment, roomOccupancy });
     try {
       if (!apiKey) {
-        setMessages([...nextHistory, { role: "assistant", text: localAnswer(text, context), source: "Local energy assistant · add a Gemini key for generative chat" }]);
+        setTypingReply({ history: nextHistory, text: localAnswer(text, context), source: "Local energy assistant · add a Gemini key for generative chat" });
       } else {
         const answer = await sendGeminiChat({ apiKey, history: nextHistory, context });
-        setMessages([...nextHistory, { role: "assistant", text: answer, source: "Gemini · live room context" }]);
+        setTypingReply({ history: nextHistory, text: answer, source: "Gemini · live room context" });
         setApiStatus("connected");
       }
     } catch (error) {
       setApiStatus("error");
       const errorMessage = error instanceof Error ? error.message.slice(0, 180) : "network or API error";
-      setMessages([...nextHistory, {
-        role: "assistant",
+      setTypingReply({
+        history: nextHistory,
         text: `${localAnswer(text, context)}\n\nGemini could not be reached (${errorMessage}). This is the local fallback; check the API key, model access, quota, and network connection in Settings.`,
         source: "Local fallback",
-      }]);
+      });
     } finally {
       setSending(false);
     }
   }
 
   const room = getRoomSnapshot(selectedRoom, settings, roomEquipment, roomOccupancy?.[selectedRoom]);
+  const busy = sending || Boolean(typingReply);
   const currentRoomEnergy = room.connected ? (simulatedEnergy ?? room.energyKwh) : room.energyKwh;
   const status = apiStatus === "connected" ? "Gemini connected" : apiStatus === "ready" ? "Gemini key saved · send a message" : apiStatus === "error" ? "Gemini unavailable · local answers" : "Connect Gemini for live AI";
 
@@ -162,10 +182,11 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
         <div className="energy-chat-context"><Sparkles size={13}/> <span>ROOM</span><strong>{selectedRoom}</strong><span className="chat-context-energy">{currentRoomEnergy.toFixed(2)} kWh est.</span></div>
         <div className="energy-chat-messages" ref={listRef} aria-live="polite">
           {messages.map((message, index) => <article className={`chat-message ${message.role}`} key={`${message.role}-${index}`}><div>{message.text}</div>{message.source && <small>{message.source}</small>}</article>)}
-          {sending && <article className="chat-message assistant" aria-label="NexEnergy is thinking"><div className="chat-typing"><i/><i/><i/></div></article>}
+          {sending && !typingReply && <article className="chat-message assistant" aria-label="NexEnergy is thinking"><div className="chat-typing"><i/><i/><i/></div></article>}
+          {typingReply && <article className="chat-message assistant chat-message-typing" aria-label="NexEnergy is replying"><div>{typingText}<span className="chat-caret" aria-hidden="true"/></div><small>{typingReply.source}</small></article>}
         </div>
-        <div className="energy-chat-suggestions" aria-label="Suggested questions">{SUGGESTIONS.map((suggestion) => <button type="button" key={suggestion} disabled={sending} onClick={() => sendQuestion(suggestion)}>{suggestion}</button>)}</div>
-        <form className="energy-chat-form" onSubmit={(event) => { event.preventDefault(); sendQuestion(); }}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about energy or this room…" aria-label="Ask NexEnergy a question" disabled={sending}/><button type="submit" aria-label="Send message" disabled={!question.trim() || sending}><Send size={16}/></button></form>
+        <div className="energy-chat-suggestions" aria-label="Suggested questions">{SUGGESTIONS.map((suggestion) => <button type="button" key={suggestion} disabled={busy} onClick={() => sendQuestion(suggestion)}>{suggestion}</button>)}</div>
+        <form className="energy-chat-form" onSubmit={(event) => { event.preventDefault(); sendQuestion(); }}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about energy or this room…" aria-label="Ask NexEnergy a question" disabled={busy}/><button type="submit" aria-label="Send message" disabled={!question.trim() || busy}><Send size={16}/></button></form>
         <p className="energy-chat-disclaimer">Estimates are not meter readings. Your key is used only in this tab and sent directly to Google Gemini.</p>
       </section>}
       {settingsOpen && <div className="chat-settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
