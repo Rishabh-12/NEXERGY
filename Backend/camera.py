@@ -97,8 +97,9 @@ def process_mobile_frame(frame_bytes: bytes) -> dict:
         model = _mobile_model
 
     now = time.time()
-    results = model(image, verbose=False)[0]
-    people = sum(1 for box in results.boxes if int(box.cls[0]) == 0)
+    from detect import detect_people
+    results = detect_people(model, image)
+    people = len(results.boxes) if results.boxes is not None else 0
     if people == 0:
         if _mobile_empty_start is None:
             _mobile_empty_start = now
@@ -158,6 +159,13 @@ def _detection_loop() -> None:
         camera_state.active = False
         return
 
+    try:
+        from detect import detect_people
+    except ImportError as exc:
+        camera_state.error = f"Could not load Backend/detect.py: {exc}"
+        camera_state.active = False
+        return
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(script_dir, "yolov8n.pt")
     if not os.path.exists(model_path):
@@ -190,8 +198,8 @@ def _detection_loop() -> None:
             break
 
         # --- YOLO detection ---
-        results = model(frame, verbose=False)
-        people = sum(1 for box in results[0].boxes if int(box.cls[0]) == 0)
+        result = detect_people(model, frame, persist=True)
+        people = len(result.boxes) if result.boxes is not None else 0
 
         # --- Empty-room timer ---
         if people == 0:
@@ -219,7 +227,7 @@ def _detection_loop() -> None:
             camera_state.fps = fps
 
         # --- Annotate frame ---
-        annotated = results[0].plot()
+        annotated = result.plot()
         h, w = annotated.shape[:2]
 
         # People count overlay

@@ -23,6 +23,7 @@ IP_CAMERA_URL = "http://192.168.29.40:8080/video"
 
 MODEL_NAME = "yolov8n.pt"
 CONFIDENCE = 0.35
+PERSON_CLASS_ID = 0
 SMOOTHING_FRAMES = 3
 
 # Use 10 seconds for testing; restore to 300 for a 5-minute alert.
@@ -60,6 +61,24 @@ PANEL_THICKNESS = 1
 WINDOW_NAME = "Smart Campus - IP Camera CV"
 
 # ==================================================
+
+
+def detect_people(model, frame, *, persist=False):
+    """Run the shared person-only YOLO pipeline used by the app camera API.
+
+    Restrict inference to the COCO person class so phones and other objects
+    cannot appear in the live vision overlay or affect occupancy counts.
+    """
+    options = {
+        "classes": [PERSON_CLASS_ID],
+        "conf": CONFIDENCE,
+        "imgsz": 640,
+        "verbose": False,
+    }
+    if persist:
+        options.update(persist=True, tracker="bytetrack.yaml")
+        return model.track(frame, **options)[0]
+    return model.predict(frame, **options)[0]
 
 
 def format_duration(seconds):
@@ -231,15 +250,7 @@ def main():
             # YOLO person detection and ByteTrack tracking.
             inference_start = time.perf_counter()
 
-            result = model.track(
-                frame,
-                persist=True,
-                tracker="bytetrack.yaml",
-                classes=[0],
-                conf=CONFIDENCE,
-                imgsz=640,
-                verbose=False,
-            )[0]
+            result = detect_people(model, frame, persist=True)
 
             inference_ms = (
                 time.perf_counter() - inference_start
