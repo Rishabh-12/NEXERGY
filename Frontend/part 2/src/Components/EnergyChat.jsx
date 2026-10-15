@@ -50,32 +50,36 @@ function localAnswer(question, context) {
   const q = question.toLowerCase();
   const occupied = context.occupancy.count;
   const systems = `${context.lighting}; ${context.airConditioning}`;
+  const estimate = `${context.estimatedEnergyKwh.toFixed(2)} kWh (${context.energyEstimateBasis})`;
   const savings = context.simulationSavingsKwh > 0
     ? `${context.simulationSavingsKwh.toFixed(2)} kWh and about ₹${(context.simulationSavingsKwh * 8).toFixed(2)} for the applied scenario`
     : context.simulationSavingsKwh === null ? context.simulationResultStatus : "no savings are recorded in the applied simulation";
 
+  if (/^(hi|hello|hey|yo|good morning|good afternoon|good evening)[!.\s]*$/.test(q)) {
+    return `Hi! I’m NexEnergy, your campus energy assistant. ${context.room} currently shows ${occupied} ${occupied === 1 ? "person" : "people"}, with ${systems}; ask me about occupancy detection, room controls, or energy savings.`;
+  }
   if (/saving|summari|reduce|cost|benefit/.test(q)) {
-    return `For ${context.room}, the applied scenario shows ${savings}. Current use is estimated at ${context.estimatedEnergyKwh.toFixed(2)} kWh (${context.energyEstimateBasis}). ${context.dataNote}`;
+    return `For ${context.room}, ${savings} Current use is estimated at ${estimate}. These are modeled values, not meter readings.`;
   }
   if (/detect\.py|camera|vision|computer vision/.test(q)) {
-    return `The project uses detect.py for person-only occupancy detection. For ${context.room}, the app currently shows ${occupied} ${occupied === 1 ? "person" : "people"} from ${context.occupancy.source}. This helps identify an empty or occupied room, but the camera does not measure electricity or detect appliance power. ${context.dataNote}`;
+    return `NexEnergy uses detect.py for person-only occupancy detection; it does not detect cell phones or measure electricity. ${context.room} currently shows ${occupied} ${occupied === 1 ? "person" : "people"} (${context.occupancy.source}).`;
   }
   if (/ac|cool|temperature|setpoint/.test(q)) {
     const target = context.acSetpointC == null ? "the selected room has no connected AC setpoint" : `the current setpoint is ${context.acSetpointC}°C`;
-    return `For ${context.room}, ${target} and ${context.airConditioning}. Try a modest setpoint around 24–26°C, then compare the simulated use while keeping comfort and campus policy in mind. Energy is not metered. ${context.dataNote}`;
+    return `For ${context.room}, ${target}; ${context.airConditioning}. Try a modest 24–26°C scenario if it fits comfort policy, then compare its estimated energy use (${estimate}).`;
   }
   if (/light|empty|occup|presence/.test(q)) {
     const suggestion = occupied === 0
       ? "The room is currently shown as empty, so switching off lighting and cooling when safe is a useful scenario to compare."
       : `The room is shown with ${occupied} ${occupied === 1 ? "person" : "people"}; consider daylight and occupied-zone lighting before changing the group.`;
-    return `${suggestion} Controls currently show ${systems}. ${context.dataNote}`;
+    return `${suggestion} Current modeled controls: ${systems}. Occupancy is ${context.occupancy.source}; energy remains an estimate.`;
   }
   if (/high|energy|consum|waste/.test(q)) {
-    const alert = context.potentialWasteAlert ? "The connected room service also reports a potential energy-waste alert. " : "";
-    return `${context.room} is estimated at ${context.estimatedEnergyKwh.toFixed(2)} kWh (${context.energyEstimateBasis}) with ${occupied} people shown and ${systems}. ${alert}Compare the current schedule and equipment settings in the simulator; the app does not measure electricity with its camera. ${context.dataNote}`;
+    const alert = context.potentialWasteAlert ? " The backend also reports a potential waste alert." : "";
+    return `${context.room} is estimated at ${estimate} with ${occupied} people shown and ${systems}.${alert} Check the room schedule and compare a lights-off or reduced-AC scenario; the camera does not measure energy.`;
   }
-    const scenario = context.acSetpointC == null ? "the selected room uses sample controls" : `the scenario uses a ${context.acSetpointC}°C AC setpoint and ${context.operatingHours} operating hours`;
-    return `For ${context.room}, the current estimate is ${context.estimatedEnergyKwh.toFixed(2)} kWh (${context.energyEstimateBasis}) with ${occupied} people shown. The model shows ${systems}; ${scenario}. Ask about the detect.py occupancy workflow, AC, lighting, or savings to explore it. ${context.dataNote}`;
+  const scenario = context.acSetpointC == null ? "This room uses sample controls" : `The scenario uses a ${context.acSetpointC}°C setpoint for ${context.operatingHours} hours`;
+  return `For ${context.room}, the estimate is ${estimate} with ${occupied} people shown and ${systems}. ${scenario}; ask me about detect.py, AC, lighting, or savings.`;
 }
 
 export default function EnergyChat({ settings, backend, selectedRoom, applied, baselineEnergy, simulatedEnergy, roomEquipment, roomOccupancy }) {
@@ -89,7 +93,7 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
   const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
   const [messages, setMessages] = useState([
-    { role: "assistant", text: "Hi, I’m NexEnergy. I can explain this room’s telemetry, compare the current scenario, and suggest ways to reduce energy use." },
+    { role: "assistant", text: readKey() ? "Hi, I’m NexEnergy. Gemini is ready for questions about this campus, room telemetry, and energy scenarios." : "Hi, I’m NexEnergy. I can answer room and energy questions locally; connect a Gemini key in the top-right settings for live generative answers." },
   ]);
   const listRef = useRef(null);
 
@@ -143,14 +147,14 @@ export default function EnergyChat({ settings, backend, selectedRoom, applied, b
 
   const room = getRoomSnapshot(selectedRoom, settings, roomEquipment, roomOccupancy?.[selectedRoom]);
   const currentRoomEnergy = room.connected ? (simulatedEnergy ?? room.energyKwh) : room.energyKwh;
-  const status = apiStatus === "connected" ? "Gemini connected" : apiStatus === "ready" ? "Gemini ready" : apiStatus === "error" ? "Gemini unavailable · local answers" : "Local energy assistant";
+  const status = apiStatus === "connected" ? "Gemini connected" : apiStatus === "ready" ? "Gemini key saved · send a message" : apiStatus === "error" ? "Gemini unavailable · local answers" : "Connect Gemini for live AI";
 
   return (
     <div className={`energy-chat ${open ? "is-open" : ""}`}>
       {open && <section className="energy-chat-panel" aria-label="NexEnergy AI chat">
         <header className="energy-chat-header">
           <span className="energy-chat-avatar"><Bot size={18}/></span>
-          <div><strong>NexEnergy assistant</strong><small className={`chat-status status-${apiStatus}`}><i/>{status}</small></div>
+          <div><strong>NexEnergy assistant</strong><button type="button" className={`chat-status status-${apiStatus}`} onClick={() => { setKeyDraft(apiKey); setKeyNotice(""); setSettingsOpen(true); }}><i/>{status}</button></div>
           <button type="button" aria-label="Gemini API key settings" title="Gemini API key settings" onClick={() => { setKeyDraft(apiKey); setKeyNotice(""); setSettingsOpen(true); }}><Settings2 size={15}/></button>
           <button type="button" aria-label="Minimize chat" onClick={() => setOpen(false)}><Minimize2 size={15}/></button>
           <button type="button" aria-label="Close chat" onClick={() => setOpen(false)}><X size={16}/></button>
