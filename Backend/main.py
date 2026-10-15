@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Smart Campus Energy Optimizer")
+app = FastAPI(title="NexEnergy API")
 
 # VIP Pass for Member 3's Frontend (Allows the dashboard to talk to your API)
 app.add_middleware(
@@ -39,11 +39,22 @@ class SimulationAppliance(BaseModel):
     current_hours: float
     simulated_hours: float
 
+class RecommendationRequest(BaseModel):
+    occupancy: int = 0
+    lights_on: bool = True
+    ac_on: bool = True
+    ac_setpoint_c: float = 22
+    operating_hours: float = 2
+    baseline_energy_kwh: float = 0
+    simulated_energy_kwh: float = 0
+    estimated_savings_kwh: float = 0
+    estimated_savings_rupees: float = 0
+
 # --- ENDPOINTS ---
 
 @app.get("/")
 def home():
-    return {"message": "Energy Calculator API is running"}
+    return {"message": "NexEnergy API is running"}
 
 @app.get("/room-state")
 def get_room_state():
@@ -132,3 +143,58 @@ def simulate_savings(appliances: list[SimulationAppliance]):
         "predicted_savings_rupees": round(estimated_rupees_saved, 2),
         "carbon_saved_kg": round(carbon_saved_kg, 2)
     }
+
+
+# 4. Rule-based recommendations used by the NexEnergy "AI Recommendations" page.
+# These are deterministic rules, not model output, and the response says so.
+@app.post("/api/recommendations")
+def recommendations(data: RecommendationRequest):
+    items = []
+
+    if data.occupancy == 0 and data.lights_on:
+        items.append({
+            "priority": "high",
+            "icon": "lights",
+            "title": "Switch off lights in an empty classroom",
+            "reason": "The room is marked empty while the lights are on. Turning them off may avoid unnecessary lighting energy use.",
+            "action": "Turn classroom lights off in the simulator.",
+        })
+
+    if data.occupancy == 0 and data.ac_on:
+        items.append({
+            "priority": "high",
+            "icon": "cooling",
+            "title": "Review air conditioning in the empty room",
+            "reason": "Cooling an unused room may waste energy. Check ventilation and room conditions first.",
+            "action": "Test the AC-off scenario and compare estimated usage.",
+        })
+
+    if data.ac_on and data.ac_setpoint_c < 24:
+        items.append({
+            "priority": "medium",
+            "icon": "setpoint",
+            "title": "Evaluate a higher AC setpoint",
+            "reason": "A moderate setpoint may reduce cooling demand depending on weather, humidity, occupancy and equipment efficiency.",
+            "action": "Try 24-26°C and compare comfort requirements.",
+        })
+
+    if data.estimated_savings_kwh > 0:
+        carbon = data.estimated_savings_kwh * 0.82
+        items.append({
+            "priority": "result",
+            "icon": "result",
+            "title": "Your scenario reduces estimated energy use",
+            "reason": f"The applied settings estimate {data.estimated_savings_kwh:.2f} kWh less energy for the selected period (about {carbon:.2f} kg CO2).",
+            "action": f"Estimated cost reduction: ₹{data.estimated_savings_rupees:.2f}. Verify with meter data when available.",
+        })
+
+    if not items:
+        items.append({
+            "priority": "tip",
+            "icon": "tip",
+            "title": "Test another energy-saving scenario",
+            "reason": "No specific action was identified by the current rules. Try reducing operating hours or testing equipment settings.",
+            "action": "Change a setting and apply the simulation.",
+        })
+
+    return {"source": "rules", "recommendations": items}

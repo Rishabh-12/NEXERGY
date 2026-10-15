@@ -1,4 +1,3 @@
-
 import {
   Activity,
   Users,
@@ -8,18 +7,15 @@ import {
   Snowflake,
   ArrowUpRight,
 } from "lucide-react";
+import PageHeader from "./PageHeader";
 
-export default function Dashboard({ scenario, onNavigate }) {
-  const baseline = scenario.baselineEnergyKwh ?? 4.4;
-  const simulated = scenario.simulatedEnergyKwh ?? 4.4;
-  const savings = scenario.estimatedSavingsKwh ?? 0;
-  const cost = scenario.estimatedSavingsRupees ?? 0;
-
+export default function Dashboard({ settings, applied, baseline, onNavigate }) {
   const stats = [
     {
       label: "Classroom occupancy",
-      value: scenario.occupancy ?? 0,
+      value: settings.occupancy,
       unit: "people",
+      note: "Demo occupancy status",
       icon: Users,
       color: "blue",
     },
@@ -27,128 +23,125 @@ export default function Dashboard({ scenario, onNavigate }) {
       label: "Baseline energy",
       value: baseline.toFixed(2),
       unit: "kWh",
+      note: "Before changes",
       icon: Zap,
       color: "amber",
     },
     {
       label: "Simulated energy",
-      value: simulated.toFixed(2),
+      value: applied.simulated.toFixed(2),
       unit: "kWh",
+      note: "After applied settings",
       icon: Activity,
       color: "blue",
     },
     {
       label: "Potential savings",
-      value: savings.toFixed(2),
+      value: applied.savings.toFixed(2),
       unit: "kWh",
+      note: `₹${applied.cost.toFixed(2)} estimated cost reduction`,
       icon: TrendingDown,
       color: "green",
     },
   ];
 
   return (
-    <div className="space-y-7">
-      <header className="dashboard-heading">
-        <div>
-          <p className="eyebrow">CAMPUS OVERVIEW</p>
-          <h1>Good energy starts here.</h1>
-          <p className="mt-2 text-slate-400">
-            Monitor classroom conditions and explore energy-saving opportunities.
-          </p>
-        </div>
-        <span className="status-pill">
-          <span className="status-dot" />
-          Simulation preview
-        </span>
-      </header>
+    <section className="page active">
+      <PageHeader
+        eyebrow="CAMPUS OVERVIEW"
+        title="Good energy starts here."
+        subtitle="Monitor classroom conditions and explore energy-saving opportunities."
+      />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map(({ label, value, unit, icon: Icon, color }) => (
+      <div className="grid stats">
+        {stats.map(({ label, value, unit, note, icon: Icon, color }) => (
           <article className="stat-card" key={label}>
-            <div className={`stat-icon ${color}`}>
-              <Icon size={21} />
+            <div className={`icon ${color}`}>
+              <Icon size={20} />
             </div>
-            <p className="mt-5 text-sm text-slate-400">{label}</p>
-            <p className="mt-2 text-3xl font-bold text-white">
-              {value} <span className="text-sm font-medium text-slate-400">{unit}</span>
+            <p className="label">{label}</p>
+            <p className="metric">
+              {value} <small>{unit}</small>
             </p>
+            <p className="card-note">{note}</p>
           </article>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-        <section className="overview-card xl:col-span-2">
-          <div className="flex items-center justify-between gap-3">
+      <div className="grid bottom-grid">
+        <section className="panel">
+          <div className="panel-title-row">
             <div>
               <p className="eyebrow">ROOM STATUS</p>
-              <h2 className="mt-2 text-xl font-bold">Classroom A-101</h2>
+              <h2>Classroom A-101</h2>
             </div>
-            <span className="status-pill">
-              <span className="status-dot" />
-              Demo data
-            </span>
+            <span className="tiny-badge">Demo data</span>
           </div>
 
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="equipment-card">
-              <Lightbulb size={22} />
+          <div className="room-mini-grid">
+            <div className="room-mini">
+              <div className="mini-icon">
+                <Lightbulb size={20} />
+              </div>
               <p>Classroom lights</p>
-              <strong>{scenario.lightsOn ? "ON" : "OFF"}</strong>
+              <strong>{settings.lightsOn ? "ON" : "OFF"}</strong>
             </div>
-            <div className="equipment-card">
-              <Snowflake size={22} />
+            <div className="room-mini">
+              <div className="mini-icon">
+                <Snowflake size={20} />
+              </div>
               <p>Air conditioning</p>
-              <strong>{scenario.acOn ? "ON" : "OFF"}</strong>
+              <strong>{settings.acOn ? "ON" : "OFF"}</strong>
             </div>
-            <div className="equipment-card">
-              <Users size={22} />
+            <div className="room-mini">
+              <div className="mini-icon">
+                <Users size={20} />
+              </div>
               <p>Occupancy</p>
-              <strong>{scenario.occupancy ?? 0} people</strong>
+              <strong>{settings.occupancy} people</strong>
             </div>
           </div>
 
           <button
-            className="primary-action mt-6"
+            type="button"
+            className="primary action"
             onClick={() => onNavigate("classroom")}
           >
-            Open Digital Classroom <ArrowUpRight size={17} />
+            Open Digital Classroom <ArrowUpRight size={16} />
           </button>
         </section>
 
-        <section className="overview-card">
+        <section className="panel">
           <p className="eyebrow">SAVINGS SUMMARY</p>
-          <h2 className="mt-2 text-xl font-bold">Your current scenario</h2>
-
-          <div className="mt-6">
-            <p className="text-sm text-slate-400">Estimated energy reduction</p>
-            <p className="mt-2 text-4xl font-bold text-emerald-300">
-              {savings.toFixed(2)} <span className="text-base">kWh</span>
-            </p>
-            <p className="mt-2 text-sm text-slate-400">
-              Estimated cost reduction: ₹{cost.toFixed(2)}
-            </p>
-          </div>
-
-          <div className="mt-5 border-t border-slate-700 pt-4">
-            <p className="text-sm leading-6 text-slate-400">
-              Compare settings in the simulator to estimate how operational
-              changes may reduce energy use.
-            </p>
-            <button
-              className="secondary-action mt-4"
-              onClick={() => onNavigate("simulator")}
-            >
-              Open Energy Simulator <ArrowUpRight size={16} />
-            </button>
-          </div>
+          <h2>Your current scenario</h2>
+          <p className="label">Estimated energy reduction</p>
+          <p className="savings-number">
+            <span>{applied.savings.toFixed(2)}</span>{" "}
+            <small style={{ font: "500 14px 'DM Sans'", color: "#94a3b8" }}>kWh</small>
+          </p>
+          <p className="label" style={{ marginTop: 4 }}>
+            Estimated cost reduction: <span>₹{applied.cost.toFixed(2)}</span>
+          </p>
+          <div className="divider" />
+          <p style={{ fontSize: 11, color: "#94a3b8" }}>
+            Compare settings in the simulator to estimate how operational changes may
+            reduce energy use.
+          </p>
+          <button
+            type="button"
+            className="secondary action"
+            onClick={() => onNavigate("simulator")}
+          >
+            Open Energy Simulator <ArrowUpRight size={16} />
+          </button>
         </section>
       </div>
 
-      <p className="text-xs leading-5 text-slate-500">
-        Energy figures are illustrative estimates based on assumed equipment
-        ratings. Occupancy and equipment status are demo values until connected
-        to live detection and campus data.
+      <p className="footnote">
+        Energy figures are illustrative estimates based on assumed equipment ratings.
+        Occupancy and equipment status are demo values until connected to live
+        detection and campus data.
       </p>
-    </div>
+    </section>
   );
 }

@@ -1,4 +1,3 @@
-
 import {
   LayoutDashboard,
   Building2,
@@ -15,7 +14,13 @@ const navItems = [
   { id: "recommendations", label: "AI Recommendations", icon: Sparkles },
 ];
 
-export default function Sidebar({ activePage, onNavigate }) {
+const statusText = {
+  checking: "Connecting to backend…",
+  online: "Backend connected",
+  offline: "Backend offline · local estimates",
+};
+
+export default function Sidebar({ activePage, onNavigate, backendStatus }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -23,7 +28,9 @@ export default function Sidebar({ activePage, onNavigate }) {
           <Zap size={23} />
         </div>
         <div>
-          <h2>Campus<span>IQ</span></h2>
+          <h2>
+            Nex<span>Energy</span>
+          </h2>
           <p>ENERGY OPTIMIZER</p>
         </div>
       </div>
@@ -38,7 +45,9 @@ export default function Sidebar({ activePage, onNavigate }) {
             className={`nav-item ${activePage === id ? "active" : ""}`}
             onClick={() => onNavigate(id)}
           >
-            <Icon size={19} />
+            <span className="ico">
+              <Icon size={18} />
+            </span>
             <span>{label}</span>
             {activePage === id && <span className="active-dot" />}
           </button>
@@ -46,12 +55,14 @@ export default function Sidebar({ activePage, onNavigate }) {
       </nav>
 
       <div className="sidebar-bottom">
-        <div className="eco-icon"><Leaf size={20} /></div>
+        <div className="leaf">
+          <Leaf size={23} />
+        </div>
         <h3>Smarter spaces.</h3>
         <p>Less energy waste. Better campuses.</p>
         <div className="sidebar-status">
-          <span />
-          Frontend preview
+          <span className={backendStatus} />
+          {statusText[backendStatus] ?? statusText.checking}
         </div>
       </div>
     </aside>

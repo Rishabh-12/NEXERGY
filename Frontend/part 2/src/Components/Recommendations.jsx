@@ -1,203 +1,168 @@
-
 import { useState } from "react";
-import { fetchAIRecommendations } from "../services/recommendationsApi";
+import { Sparkles, Zap, Snowflake, Gauge, Check } from "lucide-react";
+import PageHeader from "./PageHeader";
+import { fetchRecommendations } from "../services/api";
 
-function generateRecommendations(scenario = {}) {
+const PRIORITY_LABELS = {
+  high: "HIGH PRIORITY",
+  medium: "MEDIUM PRIORITY",
+  result: "SIMULATION RESULT",
+  tip: "OPTIMIZATION TIP",
+};
+
+const ICONS = {
+  lights: Zap,
+  cooling: Snowflake,
+  setpoint: Gauge,
+  result: Check,
+  tip: Sparkles,
+};
+
+// Local, rule-based fallback. The backend /api/recommendations endpoint applies
+// the same rules, so results are consistent whether or not the API is reachable.
+function localRecommendations({ settings, applied }) {
   const items = [];
-  const occupancy = scenario.occupancy ?? 0;
-  const lightsOn = scenario.lightsOn ?? true;
-  const acOn = scenario.acOn ?? true;
-  const setpoint = scenario.acSetpoint ?? 22;
-  const savings = scenario.estimatedSavingsKwh ?? 0;
-  const savedRupees = scenario.estimatedSavingsRupees ?? 0;
+  const { occupancy, lightsOn, acOn, setpoint } = settings;
 
   if (occupancy === 0 && lightsOn) {
     items.push({
-      priority: "High priority",
+      priority: "high",
+      icon: "lights",
       title: "Switch off lights in an empty classroom",
       reason:
-        "The classroom is marked as empty while its lights are on. Turning them off can avoid unnecessary lighting energy use.",
+        "The room is marked empty while the lights are on. Turning them off may avoid unnecessary lighting energy use.",
       action: "Turn classroom lights off in the simulator.",
-      type: "saving",
     });
   }
-
   if (occupancy === 0 && acOn) {
     items.push({
-      priority: "High priority",
+      priority: "high",
+      icon: "cooling",
       title: "Review air conditioning in the empty room",
       reason:
-        "Cooling an unused room may waste energy. Check room conditions and ventilation requirements before switching the AC off.",
+        "Cooling an unused room may waste energy. Check ventilation and room conditions first.",
       action: "Test the AC-off scenario and compare estimated usage.",
-      type: "saving",
     });
   }
-
   if (acOn && setpoint < 24) {
     items.push({
-      priority: "Medium priority",
-      title: "Evaluate a slightly higher AC setpoint",
+      priority: "medium",
+      icon: "setpoint",
+      title: "Evaluate a higher AC setpoint",
       reason:
-        "A moderate cooling setpoint may reduce cooling demand, depending on weather, occupancy, humidity, and equipment efficiency.",
+        "A moderate setpoint may reduce cooling demand depending on weather, humidity, occupancy and equipment efficiency.",
       action: "Try 24–26°C and compare comfort requirements.",
-      type: "efficiency",
     });
   }
-
-  if (savings > 0) {
+  if (applied.savings > 0) {
     items.push({
-      priority: "Simulation result",
-      title: "Your current scenario reduces estimated energy use",
-      reason:
-        `The applied settings estimate ${savings.toFixed(2)} kWh less energy use for the selected period.`,
-      action:
-        `Estimated cost reduction: ₹${savedRupees.toFixed(2)}. Verify with actual meter data when available.`,
-      type: "result",
+      priority: "result",
+      icon: "result",
+      title: "Your scenario reduces estimated energy use",
+      reason: `The applied settings estimate ${applied.savings.toFixed(2)} kWh less energy for the selected period.`,
+      action: `Estimated cost reduction: ₹${applied.cost.toFixed(2)}. Verify with meter data when available.`,
     });
   }
-
   if (items.length === 0) {
     items.push({
-      priority: "Optimization tip",
+      priority: "tip",
+      icon: "tip",
       title: "Test another energy-saving scenario",
       reason:
-        "No specific action was identified by the current rules. Try reducing operating hours or testing lighting and cooling settings.",
-      action: "Change a setting and apply the simulation to compare results.",
-      type: "efficiency",
+        "No specific action was identified by the current rules. Try reducing operating hours or testing equipment settings.",
+      action: "Change a setting and apply the simulation.",
     });
   }
-
   return items;
 }
 
-const styles = {
-  saving: {
-    icon: "⚡",
-    accent: "border-emerald-400/20 bg-emerald-400/10 text-emerald-300",
-  },
-  efficiency: {
-    icon: "❄",
-    accent: "border-sky-400/20 bg-sky-400/10 text-sky-300",
-  },
-  result: {
-    icon: "✓",
-    accent: "border-violet-400/20 bg-violet-400/10 text-violet-300",
-  },
-};
-
-export default function Recommendations({ scenario }) {
-  const [aiItems, setAiItems] = useState(null);
+export default function Recommendations({ settings, applied, baseline, simulated }) {
+  const scenarioKey = JSON.stringify([settings, applied.savings, applied.cost]);
+  const [remote, setRemote] = useState(null); // { key, items }
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
-  const localItems = generateRecommendations(scenario);
-  const items = aiItems ?? localItems;
+  // Backend results are only shown while they still match the current scenario.
+  const remoteItems = remote && remote.key === scenarioKey ? remote.items : null;
+  const items = remoteItems ?? localRecommendations({ settings, applied });
 
-  async function requestAI() {
+  async function generate() {
     setLoading(true);
-    setError("");
-
+    setNotice("");
     try {
-      const result = await fetchAIRecommendations(scenario);
-      setAiItems(result.recommendations);
+      const result = await fetchRecommendations({ settings, applied, baseline, simulated });
+      setRemote({ key: scenarioKey, items: result.recommendations });
     } catch {
-      setAiItems(null);
-      setError(
-        "AI service is unavailable. Showing local recommendations instead."
-      );
+      setRemote(null);
+      setNotice("Backend unavailable. Showing local rule-based recommendations instead.");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <section className="rounded-2xl border border-slate-700/60 bg-slate-900/80 p-6 text-white shadow-xl sm:p-7">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-400">
-            Smart insights
-          </p>
-          <h2 className="mt-2 text-2xl font-bold">AI recommendations</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            Practical actions to reduce unnecessary classroom energy use.
-          </p>
+    <section className="page active">
+      <PageHeader
+        eyebrow="SMART INSIGHTS"
+        title="AI Recommendations"
+        subtitle="Review explainable energy-saving suggestions based on the current simulated scenario."
+        pill={remoteItems ? "Backend rules" : "Local rules"}
+      />
+
+      <section className="panel">
+        <div className="panel-title-row">
+          <div>
+            <p className="eyebrow">ENERGY EFFICIENCY</p>
+            <h2>Recommended actions</h2>
+            <p style={{ marginTop: 8, color: "#94a3b8", fontSize: 11 }}>
+              Actionable suggestions from current scenario rules.
+            </p>
+          </div>
+          <span className="tiny-badge">Rule-based preview</span>
         </div>
 
-        <span className="rounded-full border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs text-slate-300">
-          {aiItems ? "AI response" : "Local rules"}
-        </span>
-      </div>
-
-      <button
-        type="button"
-        onClick={requestAI}
-        disabled={loading}
-        className="mt-5 w-full rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 font-semibold text-emerald-300 hover:bg-emerald-400/20 disabled:cursor-wait disabled:opacity-60"
-      >
-        {loading ? "Generating recommendations..." : "✦ Generate AI Recommendations"}
-      </button>
-
-      {error && (
-        <p
-          role="status"
-          className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-200"
+        <button
+          type="button"
+          className="primary action"
+          disabled={loading}
+          onClick={generate}
         >
-          {error}
-        </p>
-      )}
+          <Sparkles size={15} />
+          {loading ? "Generating…" : "Generate AI Recommendations"}
+        </button>
 
-      <div className="mt-5 space-y-4">
-        {items.map((item, index) => {
-          const type = styles[item.type] ? item.type : "efficiency";
-          const style = styles[type];
+        {notice && <p className="ai-message">{notice}</p>}
 
-          return (
-            <article
-              key={`${item.title}-${index}`}
-              className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-4"
-            >
-              <div className="flex items-start gap-3">
-                <div
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-lg ${style.accent}`}
-                >
-                  {style.icon}
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <span
-                    className={`inline-block rounded-full border px-2.5 py-1 text-[11px] font-semibold ${style.accent}`}
-                  >
-                    {item.priority ?? "Recommendation"}
-                  </span>
-
-                  <h3 className="mt-2 text-base font-semibold leading-6 text-slate-100">
-                    {item.title}
-                  </h3>
-
-                  <p className="mt-2 text-sm leading-6 text-slate-400">
-                    {item.reason}
-                  </p>
-
-                  <div className="mt-3 rounded-lg border border-slate-700/50 bg-slate-900/60 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                      Suggested action
-                    </p>
-                    <p className="mt-1 text-sm leading-6 text-slate-300">
-                      {item.action ?? item.description ?? "Review this action and verify its impact."}
-                    </p>
+        <div>
+          {items.map((item, index) => {
+            const Icon = ICONS[item.icon] ?? Sparkles;
+            return (
+              <article className="rec-item" key={`${item.title}-${index}`}>
+                <div className="rec-top">
+                  <div className="rec-icon">
+                    <Icon size={18} />
                   </div>
+                  <span className="priority">
+                    {PRIORITY_LABELS[item.priority] ?? "RECOMMENDATION"}
+                  </span>
                 </div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
+                <h3>{item.title}</h3>
+                <p>{item.reason}</p>
+                <div className="action-box">
+                  <strong>SUGGESTED ACTION</strong>
+                  {item.action}
+                </div>
+              </article>
+            );
+          })}
+        </div>
 
-      <p className="mt-5 text-xs leading-5 text-slate-500">
-        Local recommendations are rule-based suggestions, not verified AI
-        output. Energy and cost reductions are estimates from the simulator.
-        Follow campus safety, ventilation, and comfort policies.
-      </p>
+        <p className="footnote">
+          Recommendations are rule-based suggestions, not verified AI output. Energy
+          and cost reductions are estimates. Follow campus safety, ventilation, and
+          comfort policies.
+        </p>
+      </section>
     </section>
   );
 }
