@@ -1,0 +1,348 @@
+/* Smart Campus Energy Optimizer — polished global UI */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+:root {
+  font-family: 'DM Sans', sans-serif;
+  color: #e7edf7;
+  background: #080e19;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at 10% 0%, rgba(16, 185, 129, 0.10), transparent 35%),
+    radial-gradient(ellipse at 90% 10%, rgba(59, 130, 246, 0.10), transparent 32%),
+    #080e19;
+}
+
+button, input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  transition: transform .18s ease, background .18s ease, border-color .18s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+h1, h2, h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: -0.035em;
+}
+
+h1 {
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  line-height: 1.12;
+}
+
+h2 {
+  font-size: 1.35rem;
+}
+
+p {
+  line-height: 1.65;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+main {
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  padding: 36px 28px 64px;
+}
+
+/* Page header */
+main > header {
+  margin-bottom: 34px;
+}
+
+main > header h1 {
+  margin: 12px 0;
+  color: #f8fafc;
+}
+
+main > header p {
+  color: #94a3b8;
+}
+
+/* Panels and cards */
+section {
+  min-width: 0;
+}
+
+.rounded-2xl {
+  border: 1px solid rgba(148, 163, 184, .16);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(19, 29, 46, .96), rgba(12, 20, 34, .96));
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .16);
+}
+
+h2 {
+  color: #f1f5f9;
+}
+
+.text-slate-400 {
+  color: #94a3b8;
+}
+
+.text-white {
+  color: #e7edf7;
+}
+
+/* Buttons */
+button {
+  padding: 10px 16px;
+  border: 1px solid rgba(148, 163, 184, .25);
+  border-radius: 10px;
+  background: #1c2a3d;
+  color: #eaf2ff;
+  font-weight: 600;
+}
+
+button:hover {
+  background: #263a50;
+  border-color: rgba(52, 211, 153, .5);
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #34d399;
+  outline-offset: 3px;
+}
+
+/* Sliders */
+input[type="range"] {
+  width: 100%;
+  accent-color: #34d399;
+  cursor: pointer;
+}
+
+/* Labels and descriptions */
+label {
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+small {
+  color: #94a3b8;
+}
+
+/* Chart and layout responsiveness */
+.recharts-cartesian-grid line {
+  stroke: rgba(148, 163, 184, .14);
+}
+
+.recharts-text {
+  fill: #a8b6ca;
+}
+
+@media (max-width: 700px) {
+  main {
+    padding: 24px 16px 40px;
+  }
+
+  main > header {
+    margin-bottom: 24px;
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .p-5 {
+    padding: 18px;
+  }
+}
+
+/* Application sidebar */
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  padding: 30px 18px 20px;
+  background: #0b1220;
+  border-right: 1px solid #202b3d;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px 38px;
+}
+
+.brand-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  color: #34d399;
+  background: #102b29;
+  border: 1px solid #20564b;
+  border-radius: 13px;
+}
+
+.brand h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 21px;
+}
+
+.brand h2 span {
+  color: #34d399;
+}
+
+.brand p {
+  margin: 3px 0 0;
+  color: #8492a8;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+}
+
+.nav-heading {
+  margin: 0 10px 12px;
+  color: #687991;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.7px;
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 7px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 12px;
+  color: #9aa9bd;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  font-size: 13px;
+}
+
+.nav-item:hover {
+  color: #e2e8f0;
+  background: #151f30;
+}
+
+.nav-item.active {
+  color: #6ee7b7;
+  background: #102b29;
+  border-color: #20564b;
+}
+
+.active-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  background: #34d399;
+  border-radius: 50%;
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding: 17px;
+  background: linear-gradient(145deg, #102b29, #111d2b);
+  border: 1px solid #21433f;
+  border-radius: 14px;
+}
+
+.eco-icon {
+  color: #6ee7b7;
+}
+
+.sidebar-bottom h3 {
+  margin: 12px 0 4px;
+  color: #ecfdf5;
+  font-size: 15px;
+}
+
+.sidebar-bottom p {
+  margin: 0;
+  color: #91a9aa;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sidebar-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 17px;
+  color: #9aa9bd;
+  font-size: 10px;
+}
+
+.sidebar-status span {
+  width: 7px;
+  height: 7px;
+  background: #fbbf24;
+  border-radius: 50%;
+}
+
+/* Reserve room for the fixed sidebar */
+@media (min-width: 900px) {
+  body:has(.sidebar) main {
+    margin-left: 260px;
+    width: calc(100% - 260px);
+    max-width: none;
+    padding: 36px clamp(24px, 4vw, 64px) 60px;
+  }
+}
+
+@media (max-width: 899px) {
+  .sidebar {
+    position: relative;
+    width: 100%;
+    padding: 16px;
+    border-right: 0;
+    border-bottom: 1px solid #202b3d;
+  }
+
+  .brand {
+    padding: 0 4px 16px;
+  }
+
+  .sidebar-bottom {
+    display: none;
+  }
+
+  .sidebar-nav {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .nav-item {
+    width: auto;
+    flex: 1 1 145px;
+  }
+}
