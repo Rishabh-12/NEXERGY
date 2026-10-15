@@ -42,7 +42,7 @@ export default function App() {
   const [settings, setSettings] = useState(INITIAL_SETTINGS);
   const [applied, setApplied] = useState(INITIAL_APPLIED);
   const [applying, setApplying] = useState(false);
-  const [backend, setBackend] = useState({ status: "checking", message: "" });
+  const [backend, setBackend] = useState({ status: "checking", message: "", energyWasteAlert: false });
   const lastLocalChange = useRef(0);
 
   const updateSettings = useCallback(
@@ -59,7 +59,11 @@ export default function App() {
       try {
         const state = await getRoomState();
         if (cancelled) return;
-        setBackend((b) => ({ ...b, status: "online" }));
+        setBackend((b) => ({
+          ...b,
+          status: "online",
+          energyWasteAlert: Boolean(state.energy_waste_alert),
+        }));
 
         const recentlyChanged =
           Date.now() - lastLocalChange.current < LOCAL_CHANGE_GRACE_MS;
@@ -68,7 +72,7 @@ export default function App() {
           setSettings((s) => (s.occupancy === count ? s : { ...s, occupancy: count }));
         }
       } catch {
-        if (!cancelled) setBackend((b) => ({ ...b, status: "offline", message: "" }));
+        if (!cancelled) setBackend((b) => ({ ...b, status: "offline", message: "", energyWasteAlert: false }));
       }
     }
 
@@ -139,6 +143,7 @@ export default function App() {
             applied={applied}
             baseline={baselineEnergy.energyKwh}
             onNavigate={setPage}
+            backend={backend}
           />
         )}
 

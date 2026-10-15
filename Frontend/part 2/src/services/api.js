@@ -50,3 +50,19 @@ export function fetchRecommendations({ settings, applied, baseline, simulated })
     }),
   });
 }
+
+export function fetchHistoricalData() {
+  return request("/historical-data");
+}
+
+export function fetchAiInsight({ totalEnergyKwh, totalDailyCost, peopleCount }) {
+  return request("/generate-insight", {
+    method: "POST",
+    body: JSON.stringify({
+      total_energy_kwh: totalEnergyKwh,
+      total_daily_cost: totalDailyCost,
+      people_count: peopleCount,
+    }),
+  });
+}
+

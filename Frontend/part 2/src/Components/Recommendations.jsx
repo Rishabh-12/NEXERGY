@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Sparkles, Zap, Snowflake, Gauge, Check } from "lucide-react";
+import { Sparkles, Zap, Snowflake, Gauge, Check, Bot } from "lucide-react";
 import PageHeader from "./PageHeader";
-import { fetchRecommendations } from "../services/api";
+import { fetchRecommendations, fetchAiInsight } from "../services/api";
 
 const PRIORITY_LABELS = {
   high: "HIGH PRIORITY",
@@ -79,6 +79,7 @@ function localRecommendations({ settings, applied }) {
 export default function Recommendations({ settings, applied, baseline, simulated }) {
   const scenarioKey = JSON.stringify([settings, applied.savings, applied.cost]);
   const [remote, setRemote] = useState(null); // { key, items }
+  const [aiInsight, setAiInsight] = useState(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -90,8 +91,28 @@ export default function Recommendations({ settings, applied, baseline, simulated
     setLoading(true);
     setNotice("");
     try {
-      const result = await fetchRecommendations({ settings, applied, baseline, simulated });
-      setRemote({ key: scenarioKey, items: result.recommendations });
+      const [recResult, insightResult] = await Promise.allSettled([
+        fetchRecommendations({ settings, applied, baseline, simulated }),
+        fetchAiInsight({
+          totalEnergyKwh: simulated,
+          totalDailyCost: applied.cost > 0 ? applied.cost : simulated * 8,
+          peopleCount: settings.occupancy,
+        }),
+      ]);
+
+      if (recResult.status === "fulfilled") {
+        setRemote({ key: scenarioKey, items: recResult.value.recommendations });
+      } else {
+        setRemote(null);
+        setNotice("Showing local rule-based recommendations.");
+      }
+
+      if (insightResult.status === "fulfilled" && insightResult.value?.ai_insight) {
+        setAiInsight({
+          text: insightResult.value.ai_insight,
+          source: insightResult.value.source || "gemini",
+        });
+      }
     } catch {
       setRemote(null);
       setNotice("Backend unavailable. Showing local rule-based recommendations instead.");
@@ -132,6 +153,25 @@ export default function Recommendations({ settings, applied, baseline, simulated
         </button>
 
         {notice && <p className="ai-message">{notice}</p>}
+
+        {aiInsight && (
+          <article className="rec-item" style={{ borderColor: "#38bdf8", background: "rgba(56, 189, 248, 0.05)", marginBottom: "20px" }}>
+            <div className="rec-top">
+              <div className="rec-icon" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8" }}>
+                <Bot size={18} />
+              </div>
+              <span className="priority" style={{ color: "#38bdf8" }}>
+                {aiInsight.source === "gemini" ? "GOOGLE GEMINI AI INSIGHT" : "AI ADVISORY ENGINE"}
+              </span>
+            </div>
+            <h3 style={{ color: "#38bdf8" }}>Live AI Campus Insight</h3>
+            <p style={{ color: "#f1f5f9", fontSize: "14px", lineHeight: "1.6" }}>{aiInsight.text}</p>
+            <div className="action-box">
+              <strong>AI ADVISORY SUMMARY</strong>
+              Real-time analysis powered by Google Generative AI for current simulated parameters.
+            </div>
+          </article>
+        )}
 
         <div>
           {items.map((item, index) => {

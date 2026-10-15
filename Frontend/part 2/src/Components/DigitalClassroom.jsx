@@ -1,4 +1,4 @@
-import { Building2, Users, Lightbulb, Snowflake, Info, Minus, Plus } from "lucide-react";
+import { Building2, Users, Lightbulb, Snowflake, Info, Minus, Plus, AlertTriangle } from "lucide-react";
 import PageHeader from "./PageHeader";
 import { CLASSROOM_CAPACITY } from "../services/energyCalculations";
 
@@ -10,6 +10,7 @@ export default function DigitalClassroom({
   onToggleAc,
 }) {
   const { occupancy, lightsOn, acOn } = settings;
+  const isWasteAlert = Boolean(backend?.energyWasteAlert);
 
   return (
     <section className="page active">
@@ -18,6 +19,27 @@ export default function DigitalClassroom({
         title="Digital Classroom"
         subtitle="Explore a virtual classroom and see how room settings affect estimated energy use."
       />
+
+      {isWasteAlert && (
+        <div style={{
+          background: "linear-gradient(90deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05))",
+          border: "1px solid #ef4444",
+          color: "#fca5a5",
+          padding: "12px 18px",
+          borderRadius: "10px",
+          marginBottom: "20px",
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          fontSize: "14px",
+          fontWeight: "500"
+        }}>
+          <AlertTriangle size={20} color="#ef4444" />
+          <span>
+            <strong style={{ color: "#ef4444" }}>AI WASTE ALERT:</strong> Room detected empty for over 3 seconds while appliances are running. Turn off equipment or enable automation to conserve power.
+          </span>
+        </div>
+      )}
 
       <div className="classroom-page">
         <section className="panel classroom-overview">
@@ -35,17 +57,18 @@ export default function DigitalClassroom({
               <span className="classroom-badge">
                 <Users size={12} /> {occupancy} / {CLASSROOM_CAPACITY} seats occupied
               </span>
-              <span className="classroom-badge demo">Demo mode</span>
+              <span className={`classroom-badge ${backend.status === "online" ? "active" : "demo"}`}>
+                {backend.status === "online" ? "Live Connected" : "Demo mode"}
+              </span>
             </div>
           </div>
 
           <div className="camera-notice">
             <Info size={18} />
             <div>
-              <strong>Camera not connected</strong>
+              <strong>{backend.status === "online" ? "AI Vision & Backend Connected" : "Camera not connected"}</strong>
               <p>
-                Occupancy is set manually here, or received from the backend through
-                /update-occupancy.
+                Occupancy is synchronized via AI Computer Vision (`camera.py`) or set manually below.
               </p>
               {backend.status === "online" && backend.message && (
                 <p className="backend-line">Backend: {backend.message}</p>
