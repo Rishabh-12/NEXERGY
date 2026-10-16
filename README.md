@@ -49,7 +49,7 @@ npm run build
 
 GitHub Actions builds and publishes the Vite app to [GitHub Pages](https://rishabh-12.github.io/code-cash/). The workflow is defined in `.github/workflows/deploy-pages.yml`; pushes to `main` and manual workflow dispatches deploy the site.
 
-The `render.yaml` blueprint configures the Node/Express API at `https://campusiq-api.onrender.com`. To deploy the API, create a Render service from this repository using that blueprint and set its private `CAMERA_INGEST_TOKEN` environment variable. The frontend uses the local development API while running locally and the configured Render API on GitHub Pages.
+The `render.yaml` blueprint configures the Node/Express API at `https://campusiq-api-tskc.onrender.com`. To deploy the API, create a Render service from this repository using that blueprint and set its private `CAMERA_INGEST_TOKEN` environment variable. The frontend uses the local development API while running locally and the configured Render API on GitHub Pages.
 
 Render's free service can sleep while idle. The first API request after it sleeps may take a little longer while the service starts.
 
@@ -63,7 +63,7 @@ Render's free service can sleep while idle. The first API request after it sleep
    ```powershell
    cd C:\Users\Rishabh\Downloads\code-cash
    py -m pip install -r requirements-vision.txt
-   $env:BACKEND_URL = "https://campusiq-api.onrender.com/update-occupancy"
+   $env:BACKEND_URL = "https://campusiq-api-tskc.onrender.com/update-occupancy"
    $env:CAMERA_INGEST_TOKEN = "paste-the-same-private-value-from-Render"
    py detect.py
    ```

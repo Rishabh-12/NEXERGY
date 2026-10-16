@@ -55,7 +55,7 @@ const historicalData = [
 let syncConfig = {
   originalRepo: 'https://github.com/Rishabh-12/code-cash',
   targetRepo: 'https://github.com/Rishabh-12/code-cash',
-  customServerUrl: 'https://campusiq-api.onrender.com',
+  customServerUrl: 'https://campusiq-api-tskc.onrender.com',
   syncedAt: new Date().toISOString(),
   syncStatus: 'connected',
 };

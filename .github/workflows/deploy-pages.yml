@@ -26,7 +26,7 @@ jobs:
       contents: read
       pages: read
     env:
-      VITE_API_URL: ${{ vars.VITE_API_URL || 'https://campusiq-api.onrender.com' }}
+      VITE_API_URL: https://campusiq-api-tskc.onrender.com
       VITE_BASE_PATH: /code-cash/
     steps:
       - name: Check out the repository

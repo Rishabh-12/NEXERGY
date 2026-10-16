@@ -3,13 +3,15 @@ services:
     name: campusiq-api
     runtime: node
     plan: free
-    buildCommand: npm install --no-package-lock && npm run build
+    buildCommand: npm install --include=dev --no-package-lock && npm run build
     startCommand: npm run start
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NPM_CONFIG_INCLUDE
+        value: dev
       - key: CORS_ORIGINS
         value: https://rishabh-12.github.io
       - key: CAMERA_INGEST_TOKEN

@@ -44,7 +44,7 @@ STALE_TRACK_SECONDS = 3.0
 # Existing backend endpoint.
 BACKEND_URL = os.getenv(
     "BACKEND_URL",
-    "https://campusiq-api.onrender.com/update-occupancy"
+    "https://campusiq-api-tskc.onrender.com/update-occupancy"
 )
 CAMERA_TOKEN = os.getenv("CAMERA_INGEST_TOKEN", "").strip()
 ROOM_ID = os.getenv("ROOM_ID", "A-101")

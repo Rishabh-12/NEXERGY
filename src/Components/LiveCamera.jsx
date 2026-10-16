@@ -558,7 +558,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
               type="text"
               value={customApiUrlInput}
               onChange={(e) => setCustomApiUrlInput(e.target.value)}
-              placeholder="https://campusiq-api.onrender.com"
+              placeholder="https://campusiq-api-tskc.onrender.com"
               style={{
                 flex: "1 1 280px",
                 padding: "6px 10px",
@@ -583,7 +583,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
               style={{ padding: "6px 12px", fontSize: "11px", border: "1px solid var(--line)" }}
               onClick={() => {
                 setCustomApiUrl("");
-                setCustomApiUrlInput(import.meta.env.PROD ? "https://campusiq-api.onrender.com" : "http://localhost:3000");
+                setCustomApiUrlInput(import.meta.env.PROD ? "https://campusiq-api-tskc.onrender.com" : "http://localhost:3000");
                 window.location.reload();
               }}
             >
