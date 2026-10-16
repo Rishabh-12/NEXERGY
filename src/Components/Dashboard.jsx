@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   Activity,
   Users,
@@ -9,22 +8,30 @@ import {
   ArrowUpRight,
   AlertTriangle,
   History,
+  GitBranch,
+  RefreshCw,
+  CheckCircle2,
 } from "lucide-react";
-import { fetchHistoricalData } from "../services/api";
+import { fetchHistoricalData, fetchSyncInfo } from "../services/api";
 import ArchitecturalJourney from "./ArchitecturalJourney";
 import CampusOverview from "./CampusOverview";
 import EventTimeline from "./EventTimeline";
 
 export default function Dashboard({ settings, applied, baseline, onNavigate, backend, events, selectedRoom, onSelectRoom, roomEquipment }) {
   const [history, setHistory] = useState([]);
+  const [syncInfo, setSyncInfo] = useState(null);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function loadHistory() {
       try {
-        const data = await fetchHistoricalData();
-        if (!cancelled && Array.isArray(data)) {
-          setHistory(data);
+        const [data, sync] = await Promise.allSettled([fetchHistoricalData(), fetchSyncInfo()]);
+        if (!cancelled && data.status === "fulfilled" && Array.isArray(data.value)) {
+          setHistory(data.value);
+        }
+        if (!cancelled && sync.status === "fulfilled" && sync.value) {
+          setSyncInfo(sync.value);
         }
       } catch {
         // graceful fallback
@@ -35,6 +42,17 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
       cancelled = true;
     };
   }, []);
+
+  async function handleManualSync() {
+    setSyncing(true);
+    try {
+      const sync = await fetchSyncInfo();
+      if (sync) setSyncInfo(sync);
+    } catch {}
+    finally {
+      setTimeout(() => setSyncing(false), 500);
+    }
+  }
 
   const isWasteAlert = Boolean(backend?.energyWasteAlert);
 
@@ -79,6 +97,70 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
 
       <section className="operations-overview">
         <div className="operations-heading"><div><p className="eyebrow">OPERATIONS / ROOM A-101</p><h2>One clear view of today.</h2><p>Live room state where connected; estimates where measured data is unavailable.</p></div><span className={`status-pill ${backend?.status || "checking"}`}><span className="status-dot"/>{backend?.status === "online" ? "Backend connected" : backend?.status === "offline" ? "Offline · local estimates" : "Connecting"}</span></div>
+
+        {/* Sync Server & Repos Status Banner */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "12px",
+          padding: "12px 18px",
+          background: "var(--paper, #fbf9f3)",
+          border: "1px solid var(--line, #dcd8ce)",
+          borderRadius: "10px",
+          marginBottom: "18px",
+          fontSize: "12px"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <span style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "4px 8px",
+              borderRadius: "6px",
+              background: "rgba(56, 189, 248, 0.15)",
+              color: "#0284c7",
+              fontWeight: "600",
+              fontSize: "11px"
+            }}>
+              <GitBranch size={13} />
+              Synced Repositories
+            </span>
+            <span>
+              <strong>Target:</strong> <a href="https://github.com/Rishabh-12/Nexenergy" target="_blank" rel="noreferrer" style={{ color: "var(--blue, #2563eb)", textDecoration: "underline" }}>Rishabh-12/Nexenergy</a>
+            </span>
+            <span style={{ color: "#94a3b8" }}>·</span>
+            <span>
+              <strong>Original:</strong> <a href="https://github.com/Rishabh-12/code-cash" target="_blank" rel="noreferrer" style={{ color: "var(--blue, #2563eb)", textDecoration: "underline" }}>Rishabh-12/code-cash</a>
+            </span>
+            <span style={{ color: "#94a3b8" }}>·</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", color: "#16a34a" }}>
+              <CheckCircle2 size={13} /> Diff Server Active (Port 3000)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={syncing}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "5px 12px",
+              fontSize: "11px",
+              fontWeight: "600",
+              background: "transparent",
+              border: "1px solid var(--line, #cbd5e1)",
+              borderRadius: "6px",
+              cursor: "pointer",
+              color: "inherit"
+            }}
+          >
+            <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
+            {syncing ? "Syncing…" : "Sync Server State"}
+          </button>
+        </div>
 
       {isWasteAlert && (
         <div style={{

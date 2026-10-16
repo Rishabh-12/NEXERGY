@@ -1,0 +1,8 @@
+{
+  "name": "NexEnergy — Smart Campus Energy Optimizer",
+  "description": "Smart campus digital twin with 3D building visualization, real-time computer-vision occupancy tracking, what-if energy simulator, rule-based efficiency recommendations, and Gemini energy advisor.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
