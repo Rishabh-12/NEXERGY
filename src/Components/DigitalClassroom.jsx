@@ -14,7 +14,6 @@ import {
   ChevronRight,
   ChevronLeft,
   ArrowLeft,
-  Compass,
 } from "lucide-react";
 import PageHeader from "./PageHeader";
 import { CLASSROOM_CAPACITY } from "../services/energyCalculations";
@@ -34,8 +33,8 @@ const STEPS = [
     step: 2,
     tag: "campus twin, generated!",
     title: "Adaptive\nMassing",
-    desc: "14-story campus digital twin structure showing thermal envelope, floor cutaways, and cooling distribution.",
-    badge: "14-Floor BIM",
+    desc: "Three connected floors, nine modeled rooms, and a clear view of occupancy, lighting, and cooling across the building.",
+    badge: "03-Floor Digital Twin",
     action: "Inspect Interior",
   },
   {
@@ -58,10 +57,10 @@ const STEPS = [
 
 // Camera keyframes for steps: [camX, camY, camZ, lookX, lookY, lookZ, fov]
 const KEYFRAMES = [
-  [-3.4, 7.2, 5.6, -2.0, 0.2, 1.0, 36], // Step 1: Blueprint top-down angle
-  [3.8, 6.8, 8.2, 0.0, 2.8, 0.0, 34],   // Step 2: Full building massing
-  [0.6, 9.6, 3.2, 0.0, 6.1, -0.4, 30],  // Step 3: Top-floor classroom cutaway
-  [5.6, 5.2, 9.2, 0.5, 3.2, 0.0, 34],   // Step 4: Facade & energy efficiency
+  [-3.4, 5.6, 8.2, -1.8, 1.1, 0.8, 38], // Step 1: Blueprint perspective
+  [3.8, 5.3, 9.4, 0.0, 2.2, 0.0, 36],   // Step 2: Full three-floor building
+  [0.6, 4.8, 6.4, 0.0, 2.3, -0.2, 32],  // Step 3: Selected room cutaway
+  [5.6, 4.6, 9.2, 0.5, 2.2, 0.0, 36],   // Step 4: Facade and energy systems
 ];
 
 const allOn = (length, enabled) => Array.from({ length }, () => enabled);
@@ -78,7 +77,7 @@ export default function DigitalClassroom({
   onRoomEquipmentChange,
   onNavigate,
 }) {
-  const [twinViewMode, setTwinViewMode] = useState("3d-arcova"); // "3d-arcova" | "scroll-journey"
+  const [twinViewMode, setTwinViewMode] = useState("scroll-journey"); // "3d-arcova" | "scroll-journey"
   const currentRoomId = selectedRoom || "A-101";
 
   const snapshot = getRoomSnapshot(
@@ -93,6 +92,18 @@ export default function DigitalClassroom({
   const acs = roomEquipment?.acs ?? allOn(3, snapshot.acOn ?? true);
   const occupancy = snapshot.occupancy ?? 0;
   const isWasteAlert = Boolean(backend?.energyWasteAlert) && snapshot.connected;
+  const selectedFloorIndex = Math.max(0, FLOORS.findIndex((floor) => floor.rooms.some((room) => room.id === currentRoomId)));
+  const selectedRoomIndex = Math.max(0, FLOORS[selectedFloorIndex].rooms.findIndex((room) => room.id === currentRoomId));
+  const modelRooms = useMemo(() => FLOORS.flatMap((floor) => floor.rooms.map((room) => {
+    const equipment = roomEquipmentByRoom?.[room.id];
+    const roomSnapshot = getRoomSnapshot(room.id, settings, equipment, roomOccupancy?.[room.id]);
+    return {
+      id: room.id,
+      occupancy: roomSnapshot.occupancy ?? 0,
+      activeLights: equipment?.lights?.filter(Boolean).length ?? (roomSnapshot.lightsOn ? 10 : 0),
+      activeAcUnits: equipment?.acs?.filter(Boolean).length ?? (roomSnapshot.acOn ? 3 : 0),
+    };
+  })), [settings, roomEquipmentByRoom, roomOccupancy]);
 
   const [currentStep, setCurrentStep] = useState(0);
   const [targetTemp, setTargetTemp] = useState(settings?.setpoint ?? 22);
@@ -106,6 +117,10 @@ export default function DigitalClassroom({
     isWasteAlert,
     targetStep: currentStep,
     roomName: snapshot.name,
+    rooms: modelRooms,
+    selectedRoomId: currentRoomId,
+    selectedFloorIndex,
+    selectedRoomIndex,
   });
 
   useEffect(() => {
@@ -116,8 +131,12 @@ export default function DigitalClassroom({
       isWasteAlert,
       targetStep: currentStep,
       roomName: snapshot.name,
+      rooms: modelRooms,
+      selectedRoomId: currentRoomId,
+      selectedFloorIndex,
+      selectedRoomIndex,
     };
-  }, [occupancy, lights, acs, isWasteAlert, currentStep, snapshot.name]);
+  }, [occupancy, lights, acs, isWasteAlert, currentStep, snapshot.name, modelRooms, currentRoomId, selectedFloorIndex, selectedRoomIndex]);
 
   // Electrical load & efficiency
   const watts = lights.filter(Boolean).length * 40 + acs.filter(Boolean).length * 600;
@@ -322,115 +341,105 @@ export default function DigitalClassroom({
       [7.0, 0.74, -2.0, 2.4, 0.26, 1.8, 0xd8caa8],
     ].forEach(([x, y, z, w, h, d, c]) => addMesh(makeBox(w, h, d), matLam(c), x, y, z));
 
-    // 6. 14-Story Building Model
+    // 6. Three-floor, nine-room campus model
     const towerGroup = new THREE.Group();
     towerGroup.position.set(0, 0, -0.4);
     scene.add(towerGroup);
 
-    const N_FLOORS = 14;
-    const FLOOR_H = 0.44;
+    const N_FLOORS = FLOORS.length;
+    const FLOOR_H = 1.62;
+    const BUILDING_W = 7.2;
+    const BUILDING_D = 4.2;
     const floorGroups = [];
-    const studentAvatars = [];
+    const roomEntities = [];
 
-    const floorMat = matLam(0xb0c0dc);
-    const balconyMat = matLam(0x4f648e);
-    const wallMat = matLam(0xe8eef8);
+    const floorMat = matLam(0x526781);
+    const floorEdgeMat = matLam(0x263b57);
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xdce8f2, roughness: 0.35, metalness: 0.12 });
+    const glassMat = new THREE.MeshPhysicalMaterial({ color: 0x6fc6e5, transparent: true, opacity: 0.42, roughness: 0.15, metalness: 0.1, transmission: 0.25 });
+    const dividerMat = new THREE.MeshStandardMaterial({ color: 0x7188a2, roughness: 0.42, metalness: 0.24 });
     const deskMat = matLam(0x27437a);
-    const occupiedAvatarMat = new THREE.MeshStandardMaterial({
-      color: 0x34d399,
-      emissive: 0x10b981,
-      emissiveIntensity: 0.9,
-      roughness: 0.2,
-    });
-    const emptyAvatarMat = new THREE.MeshStandardMaterial({
-      color: 0x475569,
-      emissive: 0x1e293b,
-      emissiveIntensity: 0.1,
-      transparent: true,
-      opacity: 0.35,
-    });
-    const facadeMat = new THREE.MeshBasicMaterial({
-      map: facTex,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-    });
+    const activeLightMat = new THREE.MeshStandardMaterial({ color: 0xffe69a, emissive: 0xffc857, emissiveIntensity: 1.5, roughness: 0.3 });
+    const inactiveLightMat = matLam(0x56677d);
+    const activeAcMat = new THREE.MeshStandardMaterial({ color: 0x8be7ff, emissive: 0x18bdf0, emissiveIntensity: 0.8, roughness: 0.25 });
+    const inactiveAcMat = matLam(0x67788b);
+    const occupiedAvatarMat = new THREE.MeshStandardMaterial({ color: 0x34d399, emissive: 0x10b981, emissiveIntensity: 0.9, roughness: 0.2 });
+    const emptyAvatarMat = new THREE.MeshStandardMaterial({ color: 0x475569, emissive: 0x1e293b, emissiveIntensity: 0.1, transparent: true, opacity: 0.35 });
 
-    let seed = 23;
-    const randomSeed = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let floorIndex = 0; floorIndex < N_FLOORS; floorIndex++) {
+      const floorGroup = new THREE.Group();
+      floorGroup.position.set(0, floorIndex * FLOOR_H, 0);
+      towerGroup.add(floorGroup);
 
-    for (let i = 0; i < N_FLOORS; i++) {
-      const g = new THREE.Group();
-      const w = 3.5 + randomSeed() * 0.5 - i * 0.04;
-      const d = 3.1 + randomSeed() * 0.5 - i * 0.03;
-      g.position.set((randomSeed() - 0.5) * 0.4, i * FLOOR_H, (randomSeed() - 0.5) * 0.4);
-      towerGroup.add(g);
+      addMesh(makeBox(BUILDING_W + 0.14, 0.12, BUILDING_D + 0.14), floorEdgeMat, 0, 0, 0, floorGroup);
+      addMesh(makeBox(BUILDING_W, 0.09, BUILDING_D), floorMat, 0, 0.08, 0, floorGroup);
+      addMesh(makeBox(BUILDING_W, 0.11, 0.1), wallMat, 0, FLOOR_H - 0.05, -BUILDING_D / 2, floorGroup);
+      addMesh(makeBox(0.1, FLOOR_H - 0.14, BUILDING_D), wallMat, -BUILDING_W / 2, FLOOR_H / 2, 0, floorGroup);
+      addMesh(makeBox(0.1, FLOOR_H - 0.14, BUILDING_D), wallMat, BUILDING_W / 2, FLOOR_H / 2, 0, floorGroup);
 
-      if (i < N_FLOORS - 1) {
-        addMesh(makeBox(w, FLOOR_H, d), floorMat, 0, FLOOR_H / 2, 0, g);
-        addMesh(makeBox(w + 0.02, FLOOR_H, d + 0.02), facadeMat, 0, FLOOR_H / 2, 0, g, false, false);
+      const roomWidth = BUILDING_W / 3;
+      for (let roomIndex = 0; roomIndex < FLOORS[floorIndex].rooms.length; roomIndex++) {
+        const room = FLOORS[floorIndex].rooms[roomIndex];
+        const roomGroup = new THREE.Group();
+        const roomX = -BUILDING_W / 2 + roomWidth * (roomIndex + 0.5);
+        roomGroup.position.set(roomX, 0, 0);
+        floorGroup.add(roomGroup);
 
-        if (randomSeed() > 0.35) {
-          const sign = randomSeed() > 0.5 ? 1 : -1;
-          addMesh(makeBox(0.5, 0.12, 1.1), balconyMat, sign * (w / 2 + 0.16), FLOOR_H * 0.7, (randomSeed() - 0.5) * d * 0.6, g);
-          addMesh(makeBox(1.1, 0.12, 0.5), balconyMat, (randomSeed() - 0.5) * w * 0.6, FLOOR_H * 0.7, d / 2 + 0.16, g);
+        addMesh(makeBox(roomWidth - 0.1, 0.035, BUILDING_D - 0.12), matLam(0x526b84), 0, 0.16, 0, roomGroup, false, true);
+        addMesh(makeBox(roomWidth - 0.12, FLOOR_H - 0.22, 0.08), wallMat, 0, FLOOR_H / 2, -BUILDING_D / 2 + 0.04, roomGroup);
+        addMesh(makeBox(roomWidth - 0.18, 0.92, 0.06), glassMat, 0, 0.76, BUILDING_D / 2 - 0.04, roomGroup, false, false);
+        addMesh(makeBox(roomWidth - 0.18, 0.06, 0.12), floorEdgeMat, 0, 0.22, BUILDING_D / 2 - 0.02, roomGroup);
+        if (roomIndex > 0) {
+          addMesh(makeBox(0.055, FLOOR_H - 0.22, BUILDING_D - 0.14), dividerMat, -roomWidth / 2, FLOOR_H / 2, 0, roomGroup);
         }
-      } else {
-        // Floor 13: CUTAWAY ROOM
-        addMesh(makeBox(w, 0.08, d), floorMat, 0, 0.04, 0, g);
-        [-1, 1].forEach((s) => {
-          addMesh(makeBox(w, FLOOR_H, 0.07), wallMat, 0, FLOOR_H / 2, (s * d) / 2, g);
-          addMesh(makeBox(0.07, FLOOR_H, d), wallMat, (s * w) / 2, FLOOR_H / 2, 0, g);
-        });
-        addMesh(makeBox(0.06, FLOOR_H * 0.85, d * 0.8), wallMat, 0, FLOOR_H * 0.42, 0, g);
 
-        // AC Unit
-        addMesh(makeBox(0.18, 0.14, 0.55), matLam(0x0284c7), -w / 2 + 0.12, FLOOR_H * 0.75, 0, g);
-
-        // Desks & Student Avatars
-        const rows = 4;
-        const cols = 5;
-        let deskCount = 0;
-
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            if (deskCount >= CLASSROOM_CAPACITY) break;
-            const dx = -w * 0.38 + c * (w * 0.18);
-            const dz = -d * 0.34 + r * (d * 0.22);
-
-            addMesh(makeBox(0.34, 0.08, 0.2), deskMat, dx, 0.1, dz, g);
-            const avatar = addMesh(
-              new THREE.SphereGeometry(0.06, 12, 12),
-              emptyAvatarMat,
-              dx,
-              0.22,
-              dz + 0.08,
-              g,
-              false,
-              false
-            );
-            studentAvatars.push(avatar);
-            deskCount++;
+        const lightUnits = [];
+        for (let row = 0; row < 2; row++) {
+          for (let col = 0; col < 5; col++) {
+            const light = addMesh(makeBox(0.22, 0.035, 0.12), inactiveLightMat, -roomWidth * 0.36 + col * roomWidth * 0.18, FLOOR_H - 0.16, -0.72 + row * 1.35, roomGroup, false, false);
+            lightUnits.push(light);
           }
         }
+
+        const acUnits = [];
+        for (let acIndex = 0; acIndex < 3; acIndex++) {
+          const ac = addMesh(makeBox(0.34, 0.15, 0.12), inactiveAcMat, -roomWidth * 0.3 + acIndex * roomWidth * 0.3, FLOOR_H * 0.72, -BUILDING_D / 2 + 0.12, roomGroup, false, false);
+          acUnits.push(ac);
+        }
+
+        const avatars = [];
+        for (let row = 0; row < 3; row++) {
+          for (let col = 0; col < 4; col++) {
+            const x = -roomWidth * 0.3 + col * roomWidth * 0.2;
+            const z = -0.7 + row * 0.65;
+            addMesh(makeBox(0.28, 0.07, 0.2), deskMat, x, 0.26, z, roomGroup);
+            const avatar = addMesh(new THREE.SphereGeometry(0.085, 12, 12), emptyAvatarMat, x, 0.42, z + 0.1, roomGroup, false, false);
+            avatars.push(avatar);
+          }
+        }
+
+        const selectedRoomMat = new THREE.MeshBasicMaterial({
+          color: 0x54ddcc,
+          transparent: true,
+          opacity: 0.18,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        const highlight = addMesh(makeBox(roomWidth - 0.12, 0.025, BUILDING_D - 0.18), selectedRoomMat, 0, 0.19, 0, roomGroup, false, false);
+        roomEntities.push({ id: room.id, floorIndex, lightUnits, acUnits, avatars, highlight });
       }
 
-      floorGroups.push(g);
+      floorGroups.push(floorGroup);
     }
 
-    // Rooftop Alert Beacon
-    const topGroup = floorGroups[N_FLOORS - 1];
+    // Rooftop beacon signals a connected room waste alert.
     const alertBeacon = addMesh(
       new THREE.SphereGeometry(0.12, 16, 16),
-      new THREE.MeshStandardMaterial({
-        color: 0xef4444,
-        emissive: 0xef4444,
-        emissiveIntensity: 0,
-      }),
+      new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 0 }),
       0,
-      FLOOR_H + 0.18,
+      FLOOR_H + 0.14,
       0,
-      topGroup,
+      floorGroups[N_FLOORS - 1],
       false,
       false
     );
@@ -465,7 +474,9 @@ export default function DigitalClassroom({
       mouseX = cx;
       mouseY = cy;
     };
-    window.addEventListener("mousemove", handleMouseMove);
+    canvas.addEventListener("pointermove", handleMouseMove);
+    const handlePointerLeave = () => { mouseX = 0; mouseY = 0; };
+    canvas.addEventListener("pointerleave", handlePointerLeave);
 
     const handleResize = () => {
       if (!canvas) return;
@@ -489,11 +500,14 @@ export default function DigitalClassroom({
       lastTime = now;
 
       const {
-        occupancy: curOcc,
         lightsOn: curLights,
         acOn: curAc,
         isWasteAlert: curWaste,
         targetStep: curStepIdx,
+        rooms: curRooms,
+        selectedRoomId: curRoomId,
+        selectedFloorIndex: curFloorIdx,
+        selectedRoomIndex: curRoomIdx,
       } = sceneStateRef.current;
 
       smoothMx += (mouseX - smoothMx) * (1 - Math.exp(-dt * 4));
@@ -506,6 +520,14 @@ export default function DigitalClassroom({
         kf[2]
       );
       const targetLook = new THREE.Vector3(kf[3], kf[4], kf[5]);
+      camera.fov += (kf[6] - camera.fov) * (1 - Math.exp(-dt * 3.5));
+      camera.updateProjectionMatrix();
+      if (curStepIdx === 2) {
+        const focusX = (curRoomIdx - 1) * (BUILDING_W / 3);
+        const focusY = curFloorIdx * FLOOR_H + 0.88;
+        targetCamPos.set(focusX + 1.15 + smoothMx * 0.35, focusY + 1.15 - smoothMy * 0.25, 5.5);
+        targetLook.set(focusX, focusY + 0.3, 0);
+      }
 
       camera.position.lerp(targetCamPos, 1 - Math.exp(-dt * 3.5));
       lookTarget.lerp(targetLook, 1 - Math.exp(-dt * 3.5));
@@ -526,14 +548,23 @@ export default function DigitalClassroom({
         alertLight.intensity = 0;
       }
 
-      studentAvatars.forEach((avatar, idx) => {
-        if (idx < curOcc) {
-          avatar.material = occupiedAvatarMat;
-          avatar.visible = true;
-        } else {
-          avatar.material = emptyAvatarMat;
-          avatar.visible = curStepIdx === 2;
-        }
+      const roomStateById = new Map(curRooms.map((room) => [room.id, room]));
+      roomEntities.forEach((entity) => {
+        const roomState = roomStateById.get(entity.id);
+        if (!roomState) return;
+        const selected = entity.id === curRoomId;
+        entity.highlight.visible = selected;
+        entity.highlight.material.opacity = selected ? 0.15 + Math.sin(now * 0.003) * 0.035 : 0;
+        entity.avatars.forEach((avatar, idx) => {
+          avatar.visible = idx < Math.min(roomState.occupancy, entity.avatars.length);
+          avatar.material = avatar.visible ? occupiedAvatarMat : emptyAvatarMat;
+        });
+        entity.lightUnits.forEach((light, idx) => {
+          light.material = idx < roomState.activeLights ? activeLightMat : inactiveLightMat;
+        });
+        entity.acUnits.forEach((ac, idx) => {
+          ac.material = idx < roomState.activeAcUnits ? activeAcMat : inactiveAcMat;
+        });
       });
 
       floorGroups.forEach((fg, fi) => {
@@ -548,8 +579,20 @@ export default function DigitalClassroom({
 
     return () => {
       cancelAnimationFrame(animId);
-      window.removeEventListener("mousemove", handleMouseMove);
+      canvas.removeEventListener("pointermove", handleMouseMove);
+      canvas.removeEventListener("pointerleave", handlePointerLeave);
       window.removeEventListener("resize", handleResize);
+      scene.traverse((object) => {
+        if (!object.isMesh) return;
+        object.geometry?.dispose();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach((material) => {
+          Object.values(material).forEach((value) => {
+            if (value?.isTexture) value.dispose();
+          });
+          material?.dispose();
+        });
+      });
       renderer.dispose();
     };
   }, [twinViewMode]);
@@ -564,53 +607,45 @@ export default function DigitalClassroom({
     setCurrentStep((prev) => (prev - 1 + STEPS.length) % STEPS.length);
   };
 
+  const enterSelectedRoom = () => {
+    setCurrentStep(1);
+    setTwinViewMode("3d-arcova");
+  };
+
+  if (twinViewMode === "scroll-journey") {
+    return (
+      <section className="page active arcova-theme-page">
+        <DigitalTwinJourney
+          settings={settings}
+          backend={backend}
+          roomEquipment={roomEquipmentByRoom}
+          roomOccupancy={roomOccupancy}
+          selectedRoom={selectedRoom}
+          onSelectRoom={onSelectRoom}
+          onEnterRoom={enterSelectedRoom}
+          onNavigate={onNavigate}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="page active arcova-theme-page">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
         <PageHeader
           eyebrow="CAMPUS DIGITAL TWIN"
-          title="Interactive 3D Campus Model"
-          subtitle="Scroll-driven 3D architectural model visualizing real-time computer vision headcount, cooling distribution, and campus energy telemetry."
+          title="Room energy inspection"
+          subtitle="Inspect a selected room inside a three-floor, nine-room campus model. Occupancy and equipment changes stay connected to the dashboard and energy estimates."
           pill={snapshot.connected && backend?.status === "online" ? "AI Vision Live" : "Simulation Mode"}
         />
 
-        {/* View Mode Switcher */}
-        <div style={{ display: "inline-flex", gap: "4px", background: "#0e1828", padding: "4px", borderRadius: "10px", border: "1px solid #27364b" }}>
-          <button
-            type="button"
-            onClick={() => setTwinViewMode("3d-arcova")}
-            style={{
-              padding: "6px 12px",
-              borderRadius: "7px",
-              border: "none",
-              background: twinViewMode === "3d-arcova" ? "#38bdf8" : "transparent",
-              color: twinViewMode === "3d-arcova" ? "#061826" : "#94a3b8",
-              fontSize: "11px",
-              fontWeight: "700",
-              cursor: "pointer",
-              transition: "all 0.18s",
-            }}
-          >
-            3D Arcova WebGL Model
-          </button>
-          <button
-            type="button"
-            onClick={() => setTwinViewMode("scroll-journey")}
-            style={{
-              padding: "6px 12px",
-              borderRadius: "7px",
-              border: "none",
-              background: twinViewMode === "scroll-journey" ? "#38bdf8" : "transparent",
-              color: twinViewMode === "scroll-journey" ? "#061826" : "#94a3b8",
-              fontSize: "11px",
-              fontWeight: "700",
-              cursor: "pointer",
-              transition: "all 0.18s",
-            }}
-          >
-            Campus Story Journey
-          </button>
-        </div>
+        <button
+          type="button"
+          className="arcova-btn arcova-story-back"
+          onClick={() => setTwinViewMode("scroll-journey")}
+        >
+          <ArrowLeft size={14} /> Back to building story
+        </button>
       </div>
 
       {twinViewMode === "scroll-journey" ? (
@@ -759,7 +794,7 @@ export default function DigitalClassroom({
             <div className="arcova-top-hud">
               <div className="arcova-hud-room">
                 <span className="arcova-live-dot" />
-                <span>ROOM {currentRoomId} · LEVEL 14</span>
+                <span>ROOM {currentRoomId} · FLOOR 0{selectedFloorIndex + 1}</span>
               </div>
               <div className="arcova-hud-status">
                 {snapshot.connected && backend?.status === "online" ? "LIVE SYNCED" : "SIMULATION"}
