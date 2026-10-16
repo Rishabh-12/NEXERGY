@@ -8,6 +8,16 @@ NexEnergy is a campus energy-optimization demo. It combines an animated three-fl
 
 > **Demo and estimates:** This app does not read utility meters or control real building equipment. Energy, cost, carbon, and savings are estimates based on the assumptions below. Camera vision reports people only. Use the live room connection for a controlled demo, not as a safety or building-control system.
 
+## Visual tour
+
+<p align="center">
+  <img src="docs/screenshots/dashboard-home.png" alt="NexEnergy dashboard with the animated three-floor campus building" width="100%">
+</p>
+
+<p align="center"><strong>Explore the dashboard, Digital Twin, room controls, simulator, and recommendations in the <a href="docs/PROJECT_SHOWCASE.md">NexEnergy visual tour</a>.</strong></p>
+
+The [feature guide and recording timeline](docs/PROJECT_FEATURES_AND_VIDEO_TIMELINE.txt) explains the project modules and calls out where each feature appears in the supplied demo videos.
+
 ## Get started
 
 ### Use the hosted app
