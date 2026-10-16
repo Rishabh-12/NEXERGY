@@ -252,6 +252,7 @@ export default function App() {
             roomOccupancy={sampleOccupancy}
             onSampleOccupancyChange={updateSampleOccupancy}
             onRoomEquipmentChange={updateRoomEquipment}
+            onNavigate={setPage}
           />
         )}
 
