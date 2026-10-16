@@ -133,7 +133,7 @@ export default function Dashboard({ settings, applied, baseline, onNavigate, bac
             </span>
             <span style={{ color: "#94a3b8" }}>·</span>
             <span>
-              <strong>Original:</strong> <a href="https://github.com/Rishabh-12/code-cash" target="_blank" rel="noreferrer" style={{ color: "var(--blue, #2563eb)", textDecoration: "underline" }}>Rishabh-12/code-cash</a>
+              <strong>Original:</strong> <a href="https://github.com/Rishabh-12/NEXERGY" target="_blank" rel="noreferrer" style={{ color: "var(--blue, #2563eb)", textDecoration: "underline" }}>Rishabh-12/NEXERGY</a>
             </span>
             <span style={{ color: "#94a3b8" }}>·</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", color: "#16a34a" }}>

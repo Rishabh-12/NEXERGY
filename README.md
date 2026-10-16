@@ -1,8 +1,8 @@
 # NexEnergy — Smart Campus Energy Optimizer
 
-[![GitHub Pages deployment](https://github.com/Rishabh-12/code-cash/actions/workflows/deploy-pages.yml/badge.svg?branch=main)](https://github.com/Rishabh-12/code-cash/actions/workflows/deploy-pages.yml)
+[![GitHub Pages deployment](https://github.com/Rishabh-12/NEXERGY/actions/workflows/deploy-pages.yml/badge.svg?branch=main)](https://github.com/Rishabh-12/NEXERGY/actions/workflows/deploy-pages.yml)
 
-**Live demo:** [Open NexEnergy](https://rishabh-12.github.io/code-cash/) · **Source:** [Rishabh-12/code-cash](https://github.com/Rishabh-12/code-cash)
+**Live demo:** [Open NexEnergy](https://rishabh-12.github.io/NEXERGY/) · **Source:** [Rishabh-12/NEXERGY](https://github.com/Rishabh-12/NEXERGY)
 
 NexEnergy is a campus energy-optimization demo. It combines an animated three-floor digital twin, classroom occupancy, energy scenario modeling, computer vision, recommendations, and an optional Gemini chat assistant.
 
@@ -22,15 +22,15 @@ The [feature guide and recording timeline](docs/PROJECT_FEATURES_AND_VIDEO_TIMEL
 
 ### Use the hosted app
 
-Open the [live demo](https://rishabh-12.github.io/code-cash/). The frontend is hosted on GitHub Pages and reads shared room state from the NexEnergy API on Render. If the API is asleep, its first request can take a little longer. If it is unavailable, the app shows local sample data and keeps the interface usable.
+Open the [live demo](https://rishabh-12.github.io/NEXERGY/). The frontend is hosted on GitHub Pages and reads shared room state from the NexEnergy API on Render. If the API is asleep, its first request can take a little longer. If it is unavailable, the app shows local sample data and keeps the interface usable.
 
 ### Run the app locally
 
 Requirements: Node.js 20 or newer and npm.
 
 ```bash
-git clone https://github.com/Rishabh-12/code-cash.git
-cd code-cash
+git clone https://github.com/Rishabh-12/NEXERGY.git
+cd NEXERGY
 npm install
 npm run dev
 ```
@@ -109,10 +109,10 @@ The project uses two hosted services:
 
 | Part | Host | Address | Deploys from |
 | --- | --- | --- | --- |
-| Frontend | GitHub Pages | [rishabh-12.github.io/code-cash](https://rishabh-12.github.io/code-cash/) | GitHub Actions after changes to the frontend/workflow paths on `main` |
+| Frontend | GitHub Pages | [rishabh-12.github.io/NEXERGY](https://rishabh-12.github.io/NEXERGY/) | GitHub Actions after changes to the frontend/workflow paths on `main` |
 | API | Render web service | [campusiq-api-tskc.onrender.com](https://campusiq-api-tskc.onrender.com/api/health) | Render auto-deploy from `main` using [`render.yaml`](render.yaml) |
 
-The Pages workflow sets `VITE_API_URL` to the Render API and `VITE_BASE_PATH` to `/code-cash/`, builds `dist/`, and publishes it. Render installs development dependencies for the Vite build, builds the app, and starts the Express server. The API health check is `/api/health`.
+The Pages workflow sets `VITE_API_URL` to the Render API and `VITE_BASE_PATH` to `/NEXERGY/`, builds `dist/`, and publishes it. Render installs development dependencies for the Vite build, builds the app, and starts the Express server. The API health check is `/api/health`.
 
 ### Render configuration
 
@@ -162,7 +162,7 @@ docs/                        Architecture and camera setup guides
 ## Troubleshooting
 
 - **Site opens but shows offline/sample state:** check the [API health endpoint](https://campusiq-api-tskc.onrender.com/api/health). If Render’s free instance was idle, wait for it to wake and reload.
-- **Pages shows an old version:** check the [GitHub Actions deployment](https://github.com/Rishabh-12/code-cash/actions/workflows/deploy-pages.yml); wait until the latest `main` run succeeds, then hard-refresh the page.
+- **Pages shows an old version:** check the [GitHub Actions deployment](https://github.com/Rishabh-12/NEXERGY/actions/workflows/deploy-pages.yml); wait until the latest `main` run succeeds, then hard-refresh the page.
 - **Render build says it cannot find `@vitejs/plugin-react`:** make sure the Render install command includes dev dependencies. The repository’s Blueprint sets `npm install --include=dev` and `NPM_CONFIG_INCLUDE=dev`.
 - **Python camera gets 401:** the `CAMERA_INGEST_TOKEN` in the current PowerShell session must exactly match the private Render value; restart the script after correcting it.
 - **Python camera gets 503:** set a private `CAMERA_INGEST_TOKEN` in the Render service environment and wait for its redeploy to finish.

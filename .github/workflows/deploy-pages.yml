@@ -27,7 +27,7 @@ jobs:
       pages: read
     env:
       VITE_API_URL: https://campusiq-api-tskc.onrender.com
-      VITE_BASE_PATH: /code-cash/
+      VITE_BASE_PATH: /NEXERGY/
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
