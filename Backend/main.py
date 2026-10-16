@@ -133,6 +133,9 @@ class RecommendationRequest(BaseModel):
 class MobileCameraFrame(BaseModel):
     image_base64: str
 
+class CameraStartRequest(BaseModel):
+    source: Optional[str] = None
+
 # --- ENDPOINTS ---
 
 @app.get("/")
@@ -445,9 +448,10 @@ def recommendations(data: RecommendationRequest):
 # ---------------------------------------------------------------------------
 
 @app.post("/camera/start")
-def api_start_camera():
-    """Start the YOLOv8 webcam detection thread."""
-    result = start_camera()
+def api_start_camera(req: Optional[CameraStartRequest] = None):
+    """Start the YOLOv8 webcam or IP camera detection thread."""
+    source = req.source if req and req.source else 0
+    result = start_camera(source)
     return result
 
 @app.post("/camera/mobile-frame")

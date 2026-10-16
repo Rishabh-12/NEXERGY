@@ -185,7 +185,7 @@ def process_mobile_frame(frame_bytes: bytes) -> dict:
 # Background capture + detection loop
 # ---------------------------------------------------------------------------
 
-def _detection_loop() -> None:
+def _detection_loop(source=0) -> None:
     """Capture frames, run YOLO, update shared state, encode JPEG."""
     global _latest_frame, cv2
 
@@ -221,14 +221,27 @@ def _detection_loop() -> None:
         _mark_camera_inactive(f"Model load failed: {exc}")
         return
 
-    cap = cv2.VideoCapture(0)
+    is_ip = isinstance(source, str) and any(source.lower().startswith(p) for p in ("http://", "https://", "rtsp://"))
+    if is_ip:
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            cap.release()
+            cap = cv2.VideoCapture(source)
+    else:
+        cam_idx = 0
+        try:
+            cam_idx = int(source)
+        except (ValueError, TypeError):
+            cam_idx = 0
+        cap = cv2.VideoCapture(cam_idx)
+
     if not cap.isOpened():
-        _mark_camera_inactive("Cannot open webcam (index 0). Use the browser camera on a hosted backend.")
+        _mark_camera_inactive(f"Cannot open camera source: {source}")
         return
 
     with camera_state._lock:
         camera_state.active = True
-        camera_state.source = "laptop"
+        camera_state.source = "ip_camera" if is_ip else "laptop"
         camera_state.error = ""
     empty_start: float | None = None
     prev_time = time.time()
@@ -314,7 +327,7 @@ def _detection_loop() -> None:
 # Public helpers called from main.py
 # ---------------------------------------------------------------------------
 
-def start_camera() -> dict:
+def start_camera(source=0) -> dict:
     """Launch the detection thread (idempotent)."""
     global _thread
     if camera_state.active and camera_state.source == "mobile":
@@ -322,13 +335,13 @@ def start_camera() -> dict:
     if _thread is not None and _thread.is_alive():
         return {"message": "Camera already running"}
     _stop_event.clear()
-    _thread = threading.Thread(target=_detection_loop, daemon=True)
+    _thread = threading.Thread(target=_detection_loop, args=(source,), daemon=True)
     _thread.start()
     # Give it a moment to initialise
     time.sleep(0.8)
     if camera_state.error:
         return {"message": f"Camera failed: {camera_state.error}"}
-    return {"message": "Camera started"}
+    return {"message": f"Camera started ({camera_state.source})"}
 
 
 def stop_camera() -> dict:

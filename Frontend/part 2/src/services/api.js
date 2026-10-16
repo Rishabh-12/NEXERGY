@@ -1,11 +1,28 @@
 const DEFAULT_API_URL = import.meta.env.PROD ? "https://nexenergy-api.onrender.com" : "http://localhost:8000";
-const API_URL = (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(
-  /\/$/,
-  "",
-);
+
+export function getApiUrl() {
+  if (typeof window !== "undefined") {
+    const custom = localStorage.getItem("nexenergy_custom_api_url");
+    if (custom && custom.trim()) {
+      return custom.trim().replace(/\/$/, "");
+    }
+  }
+  return (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(/\/$/, "");
+}
+
+export function setCustomApiUrl(url) {
+  if (typeof window !== "undefined") {
+    if (url && url.trim()) {
+      localStorage.setItem("nexenergy_custom_api_url", url.trim().replace(/\/$/, ""));
+    } else {
+      localStorage.removeItem("nexenergy_custom_api_url");
+    }
+  }
+}
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_URL}${path}`, {
+  const base = getApiUrl();
+  const response = await fetch(`${base}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
@@ -22,10 +39,14 @@ export function getRoomState() {
   return request("/room-state");
 }
 
-export function sendOccupancy(peopleCount) {
+export function sendOccupancy(peopleCount, extra = {}) {
   return request("/update-occupancy", {
     method: "POST",
-    body: JSON.stringify({ people_count: peopleCount }),
+    body: JSON.stringify({
+      people_count: peopleCount,
+      occupancy_count: peopleCount,
+      ...extra,
+    }),
   });
 }
 
@@ -79,8 +100,11 @@ export function fetchAiInsight(params = {}) {
 
 // --- Camera / Computer Vision ---
 
-export function startCamera() {
-  return request("/camera/start", { method: "POST" });
+export function startCamera(source = null) {
+  return request("/camera/start", {
+    method: "POST",
+    body: JSON.stringify(source ? { source } : {}),
+  });
 }
 
 export function stopCamera() {
@@ -100,5 +124,5 @@ export function sendMobileCameraFrame(imageBase64) {
 
 /** Returns the full URL for the MJPEG stream (use as <img src={...}>). */
 export function getCameraFeedUrl() {
-  return `${API_URL}/camera/feed`;
+  return `${getApiUrl()}/camera/feed`;
 }

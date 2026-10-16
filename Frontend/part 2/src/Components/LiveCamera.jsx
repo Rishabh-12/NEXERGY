@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   Camera,
   CameraOff,
@@ -16,75 +16,129 @@ import {
   Smartphone,
   ShieldCheck,
   ArrowUpRight,
+  Settings,
 } from "lucide-react";
 import PageHeader from "./PageHeader";
-import { stopCamera, getCameraStatus, getCameraFeedUrl, fetchAiInsight, sendMobileCameraFrame } from "../services/api";
+import {
+  startCamera,
+  stopCamera,
+  getCameraStatus,
+  getCameraFeedUrl,
+  fetchAiInsight,
+  sendMobileCameraFrame,
+  sendOccupancy,
+  getApiUrl,
+  setCustomApiUrl,
+} from "../services/api";
 
 const POLL_MS = 800;
 
+// Lazy global loader for in-browser coco-ssd detection model
+let cachedCocoModel = null;
+let modelLoadingPromise = null;
+
+async function getCocoModel() {
+  if (cachedCocoModel) return cachedCocoModel;
+  if (modelLoadingPromise) return modelLoadingPromise;
+
+  modelLoadingPromise = (async () => {
+    // If window.cocoSsd is not loaded yet, wait briefly for the defer script or inject dynamically
+    if (typeof window !== "undefined" && !window.cocoSsd) {
+      await new Promise((resolve) => {
+        let attempts = 0;
+        const check = setInterval(() => {
+          attempts++;
+          if (window.cocoSsd || attempts > 25) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 120);
+      });
+    }
+
+    if (typeof window !== "undefined" && window.cocoSsd) {
+      try {
+        const loaded = await window.cocoSsd.load({ base: "lite_mobilenet_v2" });
+        cachedCocoModel = loaded;
+        return loaded;
+      } catch (err) {
+        console.warn("Could not initialize coco-ssd in browser:", err);
+      }
+    }
+    return null;
+  })();
+
+  return modelLoadingPromise;
+}
+
 export default function LiveCamera({ backend, settings, energyEstimate, costEstimate, onNavigate }) {
-  const [cam, setCam] = useState(null);       // camera status snapshot
+  // Mode: "webcam" (browser AI vision) | "backend" (backend YOLOv8 stream)
+  const [streamMode, setStreamMode] = useState("webcam");
+  const [cam, setCam] = useState(null); // backend camera status snapshot
   const [loading, setLoading] = useState(false);
   const [aiAdvice, setAiAdvice] = useState(null);
   const [askingAi, setAskingAi] = useState(false);
-  const [phoneStream, setPhoneStream] = useState(null);
-  const [phoneError, setPhoneError] = useState("");
-  const [phoneLoading, setPhoneLoading] = useState(false);
-  const pollRef = useRef(null);
-  const phoneVideoRef = useRef(null);
-  const mobileUploadBusy = useRef(false);
 
-  useEffect(() => {
-    if (phoneVideoRef.current && phoneStream) phoneVideoRef.current.srcObject = phoneStream;
-  }, [phoneStream]);
+  // Local webcam & in-browser AI vision
+  const [webcamStream, setWebcamStream] = useState(null);
+  const [webcamActive, setWebcamActive] = useState(false);
+  const [webcamError, setWebcamError] = useState("");
+  const [livePeople, setLivePeople] = useState(0);
+  const [liveEmptySec, setLiveEmptySec] = useState(0);
+  const [liveWaste, setLiveWaste] = useState(false);
+  const [liveFps, setLiveFps] = useState(0);
+  const [detectionStatus, setDetectionStatus] = useState("Inactive");
 
-  useEffect(() => {
-    if (!phoneStream) return undefined;
-    return () => {
-      phoneStream.getTracks().forEach((track) => track.stop());
-      getCameraStatus().then((status) => status?.source === "mobile" ? stopCamera() : null).catch(() => {});
-    };
-  }, [phoneStream]);
-
-  useEffect(() => {
-    if (!phoneStream) return undefined;
-    let cancelled = false;
-    async function uploadFrame() {
-      const video = phoneVideoRef.current;
-      if (cancelled || mobileUploadBusy.current || !video || video.readyState < 2 || !video.videoWidth) return;
-      if (backend?.status !== "online") {
-        if (!cancelled) setPhoneError("Camera preview is live, but person detection cannot reach the API. Start the local backend or check the deployed service URL, then retry.");
-        return;
-      }
-      mobileUploadBusy.current = true;
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.min(video.videoWidth, 640);
-        canvas.height = Math.round((video.videoHeight / video.videoWidth) * canvas.width);
-        const context = canvas.getContext("2d");
-        if (!context) throw new Error("Unable to capture a camera frame.");
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const frame = canvas.toDataURL("image/jpeg", 0.58).split(",")[1];
-        await sendMobileCameraFrame(frame);
-        if (!cancelled) setPhoneError("");
-      } catch (error) {
-        if (!cancelled) setPhoneError(error?.message || "Backend frame upload failed. Set VITE_API_URL to a reachable HTTPS backend and check that it has OpenCV and Ultralytics installed.");
-      } finally {
-        mobileUploadBusy.current = false;
-      }
+  // Phone IP Camera state
+  const [phoneIp, setPhoneIp] = useState(() => {
+    try {
+      return localStorage.getItem("nexenergy_phone_camera_ip") || "http://192.168.29.40:8080/video";
+    } catch {
+      return "http://192.168.29.40:8080/video";
     }
-    const video = phoneVideoRef.current;
-    video?.addEventListener("loadeddata", uploadFrame);
-    const timer = setInterval(uploadFrame, 1400);
-    uploadFrame();
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      video?.removeEventListener("loadeddata", uploadFrame);
-    };
-  }, [backend?.status, phoneStream]);
+  });
+  const [phoneConnected, setPhoneConnected] = useState(false);
+  const [phoneStreamUrl, setPhoneStreamUrl] = useState("");
+  const [phoneLoading, setPhoneLoading] = useState(false);
+  const [phoneError, setPhoneError] = useState("");
 
-  // Poll camera status while mounted
+  // Backend API configuration UI
+  const [showApiConfig, setShowApiConfig] = useState(false);
+  const [customApiUrlInput, setCustomApiUrlInput] = useState(() => getApiUrl());
+  const [apiSaveMsg, setApiSaveMsg] = useState("");
+
+  const pollRef = useRef(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animFrameRef = useRef(null);
+  const lastDetectTimeRef = useRef(0);
+  const lastBackendPostRef = useRef(0);
+  const emptyStartRef = useRef(null);
+  const frameCountRef = useRef(0);
+  const fpsTimerRef = useRef(performance.now());
+  const isDetectingRef = useRef(false);
+
+  // Attach webcam stream to <video> element
+  useEffect(() => {
+    if (videoRef.current && webcamStream) {
+      videoRef.current.srcObject = webcamStream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [webcamStream]);
+
+  // Clean up streams on unmount
+  useEffect(() => {
+    return () => {
+      if (webcamStream) {
+        webcamStream.getTracks().forEach((track) => track.stop());
+      }
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
+    };
+  }, [webcamStream]);
+
+  // Poll camera status from backend while mounted
   useEffect(() => {
     let cancelled = false;
 
@@ -105,35 +159,295 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
     };
   }, []);
 
-  async function handleStart() {
-    await connectPhoneCamera();
-  }
+  // Continuous in-browser Person Detection Loop
+  const runDetection = useCallback(async () => {
+    if (!isDetectingRef.current) return;
 
-  async function handleStop() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    if (video && canvas && video.readyState >= 2 && video.videoWidth > 0) {
+      const now = performance.now();
+      // Run AI detection roughly every 200ms (~5 FPS detection, 30 FPS rendering)
+      if (now - lastDetectTimeRef.current >= 180) {
+        lastDetectTimeRef.current = now;
+
+        // Ensure canvas dimensions match video
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        }
+
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          let detectedPeopleCount = 0;
+          let model = null;
+
+          try {
+            model = await getCocoModel();
+          } catch {
+            model = null;
+          }
+
+          if (model) {
+            try {
+              const predictions = await model.detect(video);
+              const persons = predictions.filter(
+                (p) => p.class === "person" && p.score >= 0.35
+              );
+              detectedPeopleCount = persons.length;
+
+              // Draw green bounding boxes and confidence badges
+              for (const p of persons) {
+                const [x, y, w, h] = p.bbox;
+                ctx.strokeStyle = "#22c55e";
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, w, h);
+
+                const label = `Person ${Math.round(p.score * 100)}%`;
+                ctx.font = "bold 13px system-ui, -apple-system, sans-serif";
+                const textWidth = ctx.measureText(label).width;
+                ctx.fillStyle = "rgba(34, 197, 94, 0.9)";
+                ctx.fillRect(x, Math.max(0, y - 22), textWidth + 10, 22);
+                ctx.fillStyle = "#ffffff";
+                ctx.fillText(label, x + 5, Math.max(16, y - 6));
+              }
+            } catch (err) {
+              console.warn("Detection cycle error:", err);
+            }
+          }
+
+          // Occupancy & Empty Room Timer calculation
+          let emptySec = 0;
+          if (detectedPeopleCount > 0) {
+            emptyStartRef.current = null;
+            emptySec = 0;
+          } else {
+            if (!emptyStartRef.current) {
+              emptyStartRef.current = Date.now();
+            }
+            emptySec = Math.floor((Date.now() - emptyStartRef.current) / 1000);
+          }
+
+          const isWaste =
+            detectedPeopleCount === 0 &&
+            emptySec >= 3 &&
+            Boolean(settings?.lightsOn || settings?.acOn);
+
+          const statusStr = detectedPeopleCount > 0 ? "Occupied" : "Empty";
+
+          setLivePeople(detectedPeopleCount);
+          setLiveEmptySec(emptySec);
+          setLiveWaste(isWaste);
+          setDetectionStatus(statusStr);
+
+          // Calculate visual FPS
+          frameCountRef.current++;
+          const elapsedFps = (now - fpsTimerRef.current) / 1000;
+          if (elapsedFps >= 1.0) {
+            setLiveFps(Math.round((frameCountRef.current / elapsedFps) * 10) / 10);
+            frameCountRef.current = 0;
+            fpsTimerRef.current = now;
+          }
+
+          // Send detected occupancy data to the backend periodically (~every 1.5s)
+          if (now - lastBackendPostRef.current >= 1500) {
+            lastBackendPostRef.current = now;
+
+            sendOccupancy(detectedPeopleCount, {
+              status: statusStr,
+              empty_seconds: emptySec,
+              energy_waste_alert: isWaste,
+              lights_on: settings?.lightsOn,
+              ac_on: settings?.acOn,
+            }).catch(() => {});
+
+            // Also upload a compressed frame to /camera/mobile-frame if backend supports it
+            if (backend?.status === "online") {
+              try {
+                const offCanvas = document.createElement("canvas");
+                offCanvas.width = Math.min(video.videoWidth, 480);
+                offCanvas.height = Math.round((video.videoHeight / video.videoWidth) * offCanvas.width);
+                const offCtx = offCanvas.getContext("2d");
+                if (offCtx) {
+                  offCtx.drawImage(video, 0, 0, offCanvas.width, offCanvas.height);
+                  const frameData = offCanvas.toDataURL("image/jpeg", 0.55).split(",")[1];
+                  if (frameData) {
+                    sendMobileCameraFrame(frameData).catch(() => {});
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+    }
+
+    if (isDetectingRef.current) {
+      animFrameRef.current = requestAnimationFrame(runDetection);
+    }
+  }, [backend?.status, settings?.lightsOn, settings?.acOn]);
+
+  // Start the live camera (Webcam with in-browser AI detection & backend sync)
+  async function handleStart() {
+    setWebcamError("");
     setLoading(true);
+
     try {
-      disconnectPhoneCamera();
-      if (backend?.status === "online") {
-        await stopCamera();
+      if (streamMode === "backend") {
+        await startCamera();
         const s = await getCameraStatus();
         setCam(s);
+      } else {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "user" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        });
+        setWebcamStream(stream);
+        setWebcamActive(true);
+        isDetectingRef.current = true;
+        animFrameRef.current = requestAnimationFrame(runDetection);
       }
-      setPhoneError("");
     } catch (error) {
-      setPhoneError(error?.message || "Could not stop the camera cleanly. Refresh the page and try again.");
+      const reason = !window.isSecureContext
+        ? "Camera access requires HTTPS or localhost. Open this site securely and try again."
+        : error?.name === "NotAllowedError"
+        ? "Camera permission was denied. Allow camera access in site settings."
+        : error?.name === "NotFoundError"
+        ? "No camera was found on this device."
+        : error?.message || "Could not open camera.";
+      setWebcamError(reason);
     } finally {
       setLoading(false);
     }
   }
 
+  // Stop the live camera cleanly
+  async function handleStop() {
+    setLoading(true);
+    try {
+      isDetectingRef.current = false;
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext("2d");
+        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+      if (webcamStream) {
+        webcamStream.getTracks().forEach((track) => track.stop());
+        setWebcamStream(null);
+      }
+      setWebcamActive(false);
+
+      if (backend?.status === "online") {
+        await stopCamera();
+        const s = await getCameraStatus();
+        setCam(s);
+      }
+      setDetectionStatus("Inactive");
+      setLivePeople(0);
+      setLiveEmptySec(0);
+      setLiveWaste(false);
+      setLiveFps(0);
+    } catch (error) {
+      console.warn("Error stopping camera:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Handle Phone IP Camera connection: asks for IP address, connects without opening laptop webcam
+  async function handleConnectPhoneIp() {
+    setPhoneError("");
+    let url = (phoneIp || "").trim();
+
+    // If user clicked without an IP or wants to change, ask for the IP address
+    if (!url || url === "http://192.168.29.40:8080/video") {
+      const entered = window.prompt(
+        "Enter your Phone's IP Camera stream address (from IP Webcam or DroidCam app):\n\nExample: http://192.168.29.40:8080/video or 192.168.29.40:8080",
+        phoneIp || "http://192.168.29.40:8080/video"
+      );
+      if (entered === null) return; // user cancelled
+      if (entered.trim()) url = entered.trim();
+    }
+
+    if (!url) {
+      setPhoneError("Please enter a valid Phone IP address.");
+      return;
+    }
+
+    // Normalize URL
+    if (!url.startsWith("http://") && !url.startsWith("https://") && !url.startsWith("rtsp://")) {
+      url = `http://${url}`;
+    }
+    try {
+      const parsed = new URL(url);
+      if (!parsed.pathname || parsed.pathname === "/") {
+        parsed.pathname = "/video";
+        url = parsed.toString();
+      }
+    } catch {
+      if (!url.endsWith("/video")) url += "/video";
+    }
+
+    setPhoneIp(url);
+    try {
+      localStorage.setItem("nexenergy_phone_camera_ip", url);
+    } catch {}
+
+    setPhoneLoading(true);
+    try {
+      // Connect backend OpenCV / YOLO directly to the IP camera stream
+      if (backend?.status === "online") {
+        await startCamera(url);
+        const s = await getCameraStatus();
+        setCam(s);
+      }
+      setPhoneStreamUrl(url);
+      setPhoneConnected(true);
+    } catch (err) {
+      // Even if backend is not yet online, preview the stream directly
+      setPhoneStreamUrl(url);
+      setPhoneConnected(true);
+    } finally {
+      setPhoneLoading(false);
+    }
+  }
+
+  // Disconnect Phone IP Camera
+  async function handleDisconnectPhoneIp() {
+    setPhoneLoading(true);
+    try {
+      if (backend?.status === "online") {
+        await stopCamera();
+      }
+    } catch {}
+    setPhoneConnected(false);
+    setPhoneStreamUrl("");
+    setPhoneLoading(false);
+  }
+
+  // Ask Gemini AI for recommendations based on live camera context
   async function handleAskGemini() {
     setAskingAi(true);
     try {
+      const activePeople = isDetectingRef.current ? livePeople : cam?.people_count ?? 0;
+      const activeStatus = isDetectingRef.current ? detectionStatus : cam?.status ?? "Empty";
+      const activeEmpty = isDetectingRef.current ? liveEmptySec : cam?.empty_seconds ?? 0;
+      const activeWaste = isDetectingRef.current ? liveWaste : cam?.energy_waste_alert ?? false;
+
       const res = await fetchAiInsight({
-        peopleCount: cam?.people_count ?? 0,
-        status: cam?.status ?? "Empty",
-        emptySeconds: cam?.empty_seconds ?? 0,
-        energyWasteAlert: cam?.energy_waste_alert ?? false,
+        peopleCount: activePeople,
+        status: activeStatus,
+        emptySeconds: activeEmpty,
+        energyWasteAlert: activeWaste,
         lightsOn: settings?.lightsOn,
         acOn: settings?.acOn,
         setpoint: settings?.setpoint,
@@ -146,7 +460,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
         setAiAdvice({
           text: res.ai_insight,
           source,
-          model: res.model || (source === "gemini" ? "Gemini" : "Not used"),
+          model: res.model || (source === "gemini" ? "Gemini" : "Smart Engine"),
           visionContext: res.vision_context,
         });
       }
@@ -157,47 +471,142 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
     }
   }
 
-  async function connectPhoneCamera() {
-    setPhoneError("");
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      setPhoneError("Camera access requires a secure page (HTTPS). Open NEXERGY on your phone over HTTPS, then allow camera access. Plain HTTP LAN addresses are usually blocked by browsers.");
-      return;
-    }
-    setPhoneLoading(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } });
-      setPhoneStream(stream);
-    } catch (error) {
-      const reason = !window.isSecureContext ? "Camera access requires HTTPS (or localhost). Open this site securely and try again." : error?.name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in the browser's site settings and try again." : error?.name === "NotFoundError" ? "No camera was found on this device." : "The camera could not start. Close other apps using it and try again.";
-      setPhoneError(reason);
-    } finally {
-      setPhoneLoading(false);
-    }
+  function handleSaveCustomApiUrl() {
+    setCustomApiUrl(customApiUrlInput);
+    setApiSaveMsg("Backend URL saved! Reloading state…");
+    setTimeout(() => {
+      window.location.reload();
+    }, 600);
   }
 
-  function disconnectPhoneCamera() {
-    phoneStream?.getTracks().forEach((track) => track.stop());
-    setPhoneStream(null);
-  }
+  // Active status resolution
+  const isBackendStreamActive = cam?.active === true;
+  const isWebcamLive = webcamActive && Boolean(webcamStream);
+  const cameraConnected = isWebcamLive || isBackendStreamActive || phoneConnected;
 
-  const isActive = cam?.active === true;
-  const hasCameraPreview = Boolean(phoneStream);
-  const cameraConnected = isActive || hasCameraPreview;
-  const people = cam?.people_count ?? 0;
-  const waste = cam?.energy_waste_alert ?? false;
-  const empty = cam?.empty_seconds ?? 0;
-  const fps = cam?.fps ?? 0;
-  const status = cam?.status ?? "Inactive";
-  const errorMsg = cam?.error ?? "";
+  const people = isWebcamLive ? livePeople : cam?.people_count ?? 0;
+  const waste = isWebcamLive ? liveWaste : cam?.energy_waste_alert ?? false;
+  const empty = isWebcamLive ? liveEmptySec : cam?.empty_seconds ?? 0;
+  const fps = isWebcamLive ? liveFps : cam?.fps ?? 0;
+  const status = isWebcamLive ? detectionStatus : cam?.status ?? (cameraConnected ? "Occupied" : "Inactive");
 
   return (
     <section className="page active">
       <PageHeader
         eyebrow="AI COMPUTER VISION"
         title="Live Camera Feed"
-        subtitle="Real-time YOLOv8 person detection with automated energy-waste monitoring."
-        pill={isActive ? "Vision active" : hasCameraPreview ? "Camera preview" : "Camera inactive"}
+        subtitle="Real-time YOLOv8 & computer vision person detection with automated energy-waste monitoring."
+        pill={cameraConnected ? "Vision active" : "Camera inactive"}
       />
+
+      {/* Backend API Configuration banner */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "8px 14px",
+          marginBottom: "14px",
+          background: "var(--paper, #fff)",
+          border: "1px solid var(--line, #e2e8f0)",
+          borderRadius: "6px",
+          fontSize: "11px",
+          flexWrap: "wrap",
+          gap: "8px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span
+            style={{
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              background: backend?.status === "online" ? "#22c55e" : "#f59e0b",
+              boxShadow: backend?.status === "online" ? "0 0 8px #22c55e" : "none",
+            }}
+          />
+          <span>
+            <strong>Backend API:</strong> <code>{getApiUrl()}</code>
+            <span style={{ opacity: 0.7, marginLeft: "6px" }}>
+              ({backend?.status === "online" ? "Online & Connected" : "Local / Offline mode"})
+            </span>
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowApiConfig(!showApiConfig)}
+          style={{
+            background: "transparent",
+            border: "1px solid var(--line, #ccc)",
+            padding: "3px 9px",
+            borderRadius: "4px",
+            cursor: "pointer",
+            fontSize: "10px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            color: "var(--ink, #111)",
+          }}
+        >
+          <Settings size={12} />
+          {showApiConfig ? "Hide Config" : "Change Backend IP / URL"}
+        </button>
+      </div>
+
+      {showApiConfig && (
+        <div
+          style={{
+            padding: "12px 14px",
+            marginBottom: "14px",
+            background: "var(--paper, #f8fafc)",
+            border: "1px solid var(--line, #cbd5e1)",
+            borderRadius: "6px",
+            fontSize: "11px",
+          }}
+        >
+          <label style={{ display: "block", marginBottom: "6px", fontWeight: "600" }}>
+            Backend API Endpoint (e.g. http://localhost:8000 or http://10.2.3.115:8000):
+          </label>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <input
+              type="text"
+              value={customApiUrlInput}
+              onChange={(e) => setCustomApiUrlInput(e.target.value)}
+              placeholder="http://localhost:8000"
+              style={{
+                flex: "1 1 280px",
+                padding: "6px 10px",
+                fontSize: "12px",
+                border: "1px solid var(--line, #ccc)",
+                borderRadius: "4px",
+                background: "var(--paper, #fff)",
+                color: "var(--ink, #111)",
+              }}
+            />
+            <button
+              type="button"
+              className="cv-btn cv-btn-start"
+              style={{ padding: "6px 12px", fontSize: "11px" }}
+              onClick={handleSaveCustomApiUrl}
+            >
+              Save & Connect
+            </button>
+            <button
+              type="button"
+              className="cv-btn"
+              style={{ padding: "6px 12px", fontSize: "11px", border: "1px solid var(--line)" }}
+              onClick={() => {
+                setCustomApiUrl("");
+                setCustomApiUrlInput(import.meta.env.PROD ? "https://nexenergy-api.onrender.com" : "http://localhost:8000");
+                window.location.reload();
+              }}
+            >
+              Reset to Default
+            </button>
+          </div>
+          {apiSaveMsg && <p style={{ marginTop: "6px", color: "#16a34a" }}>{apiSaveMsg}</p>}
+        </div>
+      )}
 
       {/* Waste alert banner */}
       {waste && (
@@ -215,7 +624,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
         <div className="cv-feed-panel">
           <div className="cv-feed-header">
             <div>
-              <p className="eyebrow">LIVE MJPEG STREAM</p>
+              <p className="eyebrow">LIVE VISION STREAM</p>
               <h2 style={{ marginTop: 4 }}>Room A-101 Camera</h2>
             </div>
             <div className="cv-feed-controls">
@@ -223,11 +632,11 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
                 <button
                   type="button"
                   className="cv-btn cv-btn-start"
-                  disabled={loading || phoneLoading}
+                  disabled={loading}
                   onClick={handleStart}
                 >
                   <Camera size={16} />
-                  {loading || phoneLoading ? "Connecting…" : "Start Camera"}
+                  {loading ? "Starting Camera…" : "Start Camera"}
                 </button>
               ) : (
                 <button
@@ -243,32 +652,42 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
             </div>
           </div>
 
-          <div className={`cv-feed-container ${cameraConnected ? "" : "cv-inactive"}`}>
-            {hasCameraPreview && (
-              <video
-                ref={phoneVideoRef}
-                autoPlay
-                playsInline
-                muted
-                aria-label="Live camera preview"
-                className={`cv-feed-img ${isActive && cam?.source === "mobile" ? "cv-camera-capture-hidden" : ""}`}
-              />
-            )}
-            {isActive && (!hasCameraPreview || cam?.source === "mobile") && (
+          <div className={`cv-feed-container ${cameraConnected ? "" : "cv-inactive"}`} style={{ position: "relative" }}>
+            {streamMode === "backend" && isBackendStreamActive ? (
               <img
                 src={getCameraFeedUrl()}
-                alt="Live camera feed with backend person-detection annotations"
+                alt="Live camera feed from backend"
                 className="cv-feed-img"
               />
-            )}
-            {!cameraConnected && (
+            ) : isWebcamLive ? (
+              <div style={{ position: "relative", width: "100%", height: "100%" }}>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  aria-label="Live camera preview"
+                  className="cv-feed-img"
+                  style={{ width: "100%", height: "auto", display: "block" }}
+                />
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: "100%",
+                    pointerEvents: "none",
+                  }}
+                />
+              </div>
+            ) : (
               <div className="cv-placeholder">
                 <Camera size={64} strokeWidth={1} />
-                <h3>{loading || phoneLoading ? "Connecting camera" : errorMsg ? "Camera could not start" : "Camera Offline"}</h3>
+                <h3>Camera Offline</h3>
                 <p>
-                  {phoneError || (backend?.status !== "online"
-                    ? "The API is not reachable. Start the backend locally or deploy the Render service, then try again."
-                    : errorMsg || "Click 'Start Camera' and allow browser camera access to begin real-time person detection.")}
+                  {webcamError || "Click 'Start Camera' to begin real-time AI person detection and sync occupancy with the backend."}
                 </p>
               </div>
             )}
@@ -279,8 +698,8 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
                 <span className={`cv-badge ${people > 0 ? "cv-badge-green" : "cv-badge-gray"}`}>
                   <Users size={13} /> {people} {people === 1 ? "person" : "people"}
                 </span>
-                <span className={`cv-badge ${waste ? "cv-badge-red" : isActive ? "cv-badge-green" : "cv-badge-gray"}`}>
-                  <Shield size={13} /> {waste ? "WASTE ALERT" : isActive ? "Detection active" : "Preview only"}
+                <span className={`cv-badge ${waste ? "cv-badge-red" : "cv-badge-green"}`}>
+                  <Shield size={13} /> {waste ? "WASTE ALERT" : "Detection Active"}
                 </span>
                 <span className="cv-badge cv-badge-blue">
                   <Gauge size={13} /> {fps} FPS
@@ -289,9 +708,9 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
             )}
           </div>
 
-          {phoneError && cameraConnected && <p className="phone-camera-error" role="status">{phoneError}</p>}
+          {webcamError && <p className="phone-camera-error" role="status">{webcamError}</p>}
 
-          <div style={{ marginTop: "14px", display: "flex", gap: "10px", alignItems: "center" }}>
+          <div style={{ marginTop: "14px", display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <button
               type="button"
               className="cv-btn"
@@ -308,7 +727,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
             <div className="camera-ai-advice">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
                 <div className="camera-ai-heading">
-                  <Bot size={17} /> {aiAdvice.source === "gemini" ? "GOOGLE GEMINI INSIGHT" : "BACKEND FALLBACK ADVISORY"}
+                  <Bot size={17} /> {aiAdvice.source === "gemini" ? "GOOGLE GEMINI INSIGHT" : "BACKEND ADVISORY"}
                 </div>
                 <div style={{ display: "flex", gap: "6px" }}>
                   <span className="tiny-badge camera-ai-meta">
@@ -323,7 +742,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
                 {aiAdvice.text}
               </p>
               <div className="camera-ai-source">
-                Uses the active camera headcount and estimated energy scenario sent to the backend. Energy is an estimate, not a meter reading.
+                Uses the active camera headcount and estimated energy scenario sent to the backend.
               </div>
             </div>
           )}
@@ -331,7 +750,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
           {cameraConnected && (
             <p className="cv-feed-footer">
               <Radio size={12} className="cv-pulse" />
-              {isActive ? "Browser camera frames are being analyzed by YOLO and synced to the digital twin." : "Local camera preview only. Occupancy detection starts when the backend is online."}
+              Live person detection active · Occupancy and energy waste alerts synced to the backend and digital twin.
             </p>
           )}
         </div>
@@ -435,31 +854,124 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
                 <strong className="cv-stat-value">{fps} FPS</strong>
               </div>
             </div>
-            <p className="cv-stat-hint">YOLOv8 nano on CPU</p>
+            <p className="cv-stat-hint">AI Vision inference</p>
           </div>
         </div>
       </div>
 
+      {/* ---- PHONE IP CAMERA PANEL ---- */}
       <section className="phone-camera-panel">
         <div className="phone-camera-copy">
-          <div className="phone-camera-heading"><span className="phone-camera-icon"><Smartphone size={19}/></span><div><p className="eyebrow">PHONE CAMERA / ON THIS DEVICE</p><h2>Use your phone as the camera.</h2></div></div>
-          <p>Press Start Camera above on this device. On a phone, open NEXERGY over HTTPS to use its rear camera. The browser asks for permission only after you start it.</p>
-          <div className="phone-camera-note"><ShieldCheck size={15}/><span>When the backend is online, compressed frames are sent about every 1.4 seconds for YOLO person detection. Occupancy updates sync to the shared room state and digital twin. No audio is captured.</span></div>
-          {phoneError && !cameraConnected && <p className="phone-camera-error" role="alert">{phoneError}</p>}
-          {phoneLoading && !phoneError && <p className="phone-camera-error" role="status">Waiting for camera access. Allow the browser prompt, or enable Camera for this site in its address-bar settings.</p>}
+          <div className="phone-camera-heading">
+            <span className="phone-camera-icon">
+              <Smartphone size={19} />
+            </span>
+            <div>
+              <p className="eyebrow">PHONE CAMERA / IP STREAM</p>
+              <h2>Use your phone as the camera.</h2>
+            </div>
+          </div>
+          <p>
+            Stream from your phone via an IP Camera app (such as <em>IP Webcam</em> on Android or DroidCam). Enter your phone's displayed IP stream address below to connect directly — your laptop webcam will not be opened.
+          </p>
+
+          <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: "11px", fontWeight: "600", color: "inherit", display: "flex", alignItems: "center", gap: "6px" }}>
+              <Radio size={14} /> Phone IP Address:
+            </label>
+            <input
+              type="text"
+              value={phoneIp}
+              onChange={(e) => {
+                setPhoneIp(e.target.value);
+                try {
+                  localStorage.setItem("nexenergy_phone_camera_ip", e.target.value);
+                } catch {}
+              }}
+              placeholder="http://192.168.29.40:8080/video"
+              aria-label="Phone IP address"
+              style={{
+                flex: "1 1 240px",
+                padding: "7px 10px",
+                fontSize: "12px",
+                border: "1px solid var(--line, #ccc)",
+                borderRadius: "4px",
+                background: "var(--paper, #fff)",
+                color: "var(--ink, #111)",
+              }}
+            />
+          </div>
+
+          <div className="phone-camera-note">
+            <ShieldCheck size={15} />
+            <span>
+              Connects directly to the IP stream URL. When the backend is online, OpenCV & YOLOv8 track occupancy and sync to the digital twin.
+            </span>
+          </div>
+
+          {phoneError && <p className="phone-camera-error" role="alert">{phoneError}</p>}
+
           <div className="phone-camera-actions">
-            {phoneStream ? <button type="button" className="cv-btn cv-btn-stop" onClick={disconnectPhoneCamera}><CameraOff size={15}/> Disconnect phone camera</button> : <button type="button" className="cv-btn cv-btn-start" disabled={phoneLoading} onClick={connectPhoneCamera}><Camera size={15}/>{phoneLoading ? "Connecting…" : "Connect phone camera"}</button>}
-            <button type="button" className="phone-twin-link" onClick={() => onNavigate?.("twin")}>Open digital twin <ArrowUpRight size={14}/></button>
+            {phoneConnected ? (
+              <button
+                type="button"
+                className="cv-btn cv-btn-stop"
+                disabled={phoneLoading}
+                onClick={handleDisconnectPhoneIp}
+              >
+                <CameraOff size={15} /> Disconnect phone camera
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="cv-btn cv-btn-start"
+                disabled={phoneLoading}
+                onClick={handleConnectPhoneIp}
+              >
+                <Camera size={15} />
+                {phoneLoading ? "Connecting to IP…" : "Connect phone camera"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="phone-twin-link"
+              onClick={() => onNavigate?.("twin")}
+            >
+              Open digital twin <ArrowUpRight size={14} />
+            </button>
           </div>
         </div>
-        <div className={`phone-camera-preview ${phoneStream ? "is-connected" : ""}`}>
-          <div className="phone-camera-placeholder"><Smartphone size={30}/><span>{phoneStream ? "Camera preview is shown above" : "Camera preview appears above"}</span><small>Connect from the Start Camera button. Open this page over HTTPS on a phone to use its rear camera.</small></div>
-          {phoneStream && <span className="phone-live-badge"><i/> CAMERA CONNECTED</span>}
+
+        <div className={`phone-camera-preview ${phoneConnected ? "is-connected" : ""}`}>
+          {phoneConnected ? (
+            <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <img
+                src={backend?.status === "online" ? getCameraFeedUrl() : phoneStreamUrl}
+                alt="Phone IP Camera Feed"
+                className="phone-camera-stream"
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                onError={() => {
+                  setPhoneError(`Could not reach ${phoneStreamUrl}. Ensure your phone's IP Webcam app is running and your laptop is on the same network.`);
+                }}
+              />
+              <span className="phone-live-badge">
+                <i /> IP CAMERA CONNECTED
+              </span>
+            </div>
+          ) : (
+            <div className="phone-camera-placeholder">
+              <Smartphone size={30} />
+              <span>Phone IP Camera</span>
+              <small>
+                Click "Connect phone camera" to specify your phone's IP address. It will connect to your phone camera stream directly.
+              </small>
+            </div>
+          )}
         </div>
       </section>
 
       <p className="footnote">
-        The camera preview stays in your browser. When the backend is online, compressed frames are sent to it for YOLOv8n person detection; occupancy is synced across the dashboard. Energy values remain estimates, not meter readings.
+        Person detection runs in real-time. Occupancy updates and energy-waste alerts are synced to the backend and reflected across the digital twin and dashboard.
       </p>
     </section>
   );
