@@ -181,6 +181,12 @@ export default function App() {
     }
   }, []);
 
+  const changeRoomOccupancy = useCallback((roomId, count) => {
+    if (roomId === "A-101") return changeOccupancy(count);
+    updateSampleOccupancy(roomId, count);
+    return undefined;
+  }, [changeOccupancy, updateSampleOccupancy]);
+
   // Live (not yet applied) estimates for the current switches and hours.
   const selectedEquipment = roomEquipment["A-101"];
   const baselineEnergy = calculateEnergy({ lightsOn: true, acOn: true, hours: settings.hours, activeLights: 10, activeAcUnits: 3 });
@@ -269,6 +275,10 @@ export default function App() {
             applied={applied}
             applying={applying}
             onApply={applySimulation}
+            selectedRoom={selectedRoom}
+            onSelectRoom={setSelectedRoom}
+            roomOccupancy={sampleOccupancy}
+            onRoomOccupancyChange={changeRoomOccupancy}
           />
         )}
 
