@@ -100,6 +100,13 @@ button:disabled{cursor:not-allowed}
   height: auto;
   border-radius: 14px;
 }
+.cv-camera-capture-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
 
 /* Placeholder when camera is off */
 .cv-placeholder {

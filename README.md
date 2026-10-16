@@ -59,7 +59,7 @@ From the repository root, create a virtual environment and install the Python pa
 cd Backend
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-desktop.txt
 .\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
 ```
 
@@ -70,7 +70,7 @@ cd Backend
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-desktop.txt
 python -m uvicorn main:app --reload --port 8000
 ```
 

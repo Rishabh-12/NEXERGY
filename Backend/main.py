@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from camera import camera_state, start_camera, stop_camera, mjpeg_generator, process_mobile_frame
+from camera import camera_state, start_camera, stop_camera, mjpeg_generator, process_mobile_frame, expire_mobile_camera
 
 try:
     from dotenv import load_dotenv
@@ -464,6 +464,8 @@ def api_mobile_camera_frame(data: MobileCameraFrame):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="The vision service could not process this frame. Check the backend logs and camera dependencies.") from exc
 
     room_state["people_count"] = result["people_count"]
     room_state["energy_waste_alert"] = result["energy_waste_alert"]
@@ -480,6 +482,7 @@ def api_stop_camera():
 @app.get("/camera/status")
 def api_camera_status():
     """Return current camera detection state (people count, alerts, FPS, etc.)."""
+    expire_mobile_camera()
     snap = camera_state.snapshot()
     # Also sync the live detection into room_state so the rest of the app
     # picks it up automatically via /room-state polling.

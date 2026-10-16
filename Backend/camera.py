@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 try:
     import cv2
-except ImportError:
+except Exception:
     cv2 = None
 
 # ---------------------------------------------------------------------------
@@ -60,20 +60,58 @@ _stop_event = threading.Event()
 EMPTY_THRESHOLD_SECONDS = 3
 _mobile_model = None
 _mobile_model_lock = threading.Lock()
+_mobile_inference_lock = threading.Lock()
 _mobile_empty_start: float | None = None
+_mobile_last_frame_at: float | None = None
+
+
+def _mark_camera_inactive(error: str = "") -> None:
+    """Clear stale camera telemetry after a stop or a capture/detection failure."""
+    global _latest_frame
+    with camera_state._lock:
+        camera_state.active = False
+        camera_state.people_count = 0
+        camera_state.status = "Inactive"
+        camera_state.energy_waste_alert = False
+        camera_state.empty_seconds = 0
+        camera_state.fps = 0.0
+        camera_state.error = error
+        camera_state.source = "none"
+    with _frame_lock:
+        _latest_frame = b""
+
+
+def expire_mobile_camera() -> None:
+    """Mark a lost browser stream offline if no frames arrive for a while."""
+    global _mobile_empty_start, _mobile_last_frame_at
+    with camera_state._lock:
+        is_stale = (
+            camera_state.active
+            and camera_state.source == "mobile"
+            and _mobile_last_frame_at is not None
+            and time.monotonic() - _mobile_last_frame_at > 8
+        )
+    if is_stale:
+        with _mobile_inference_lock:
+            with camera_state._lock:
+                still_stale = camera_state.active and camera_state.source == "mobile" and _mobile_last_frame_at is not None and time.monotonic() - _mobile_last_frame_at > 8
+            if still_stale:
+                _mobile_empty_start = None
+                _mobile_last_frame_at = None
+                _mark_camera_inactive("No frames received for 8 seconds. Reconnect the browser camera.")
 
 
 def process_mobile_frame(frame_bytes: bytes) -> dict:
     """Run one JPEG frame uploaded by a phone browser through the shared YOLO state."""
-    global cv2, _mobile_model, _mobile_empty_start, _latest_frame
+    global cv2, _mobile_model, _mobile_empty_start, _mobile_last_frame_at, _latest_frame
     if len(frame_bytes) > 2_000_000:
         raise ValueError("Frame is too large. Send a JPEG under 2 MB.")
 
     if cv2 is None:
         try:
             import cv2
-        except ImportError as exc:
-            raise RuntimeError("OpenCV is not installed on the backend.") from exc
+        except Exception as exc:
+            raise RuntimeError("OpenCV could not load on the backend. Install opencv-python-headless and redeploy.") from exc
 
     try:
         import numpy as np
@@ -83,47 +121,55 @@ def process_mobile_frame(frame_bytes: bytes) -> dict:
     if image is None:
         raise ValueError("The uploaded image is not a valid JPEG frame.")
 
-    with _mobile_model_lock:
-        if _mobile_model is None:
-            try:
-                from ultralytics import YOLO
-            except ImportError as exc:
-                raise RuntimeError("Ultralytics is not installed on the backend.") from exc
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            model_path = os.path.join(script_dir, "yolov8n.pt")
-            if not os.path.exists(model_path):
-                model_path = "yolov8n.pt"
-            _mobile_model = YOLO(model_path)
-        model = _mobile_model
+    try:
+        with _mobile_inference_lock:
+            with _mobile_model_lock:
+                if _mobile_model is None:
+                    try:
+                        from ultralytics import YOLO
+                    except ImportError as exc:
+                        raise RuntimeError("Ultralytics is not installed on the backend.") from exc
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    model_path = os.path.join(script_dir, "yolov8n.pt")
+                    if not os.path.exists(model_path):
+                        raise RuntimeError("YOLO model Backend/yolov8n.pt is missing from the deployed backend.")
+                    _mobile_model = YOLO(model_path)
+                model = _mobile_model
 
-    now = time.time()
-    from detect import detect_people
-    results = detect_people(model, image)
-    people = len(results.boxes) if results.boxes is not None else 0
-    if people == 0:
-        if _mobile_empty_start is None:
-            _mobile_empty_start = now
-        elapsed = int(now - _mobile_empty_start)
-        waste_alert = elapsed >= EMPTY_THRESHOLD_SECONDS
-    else:
-        _mobile_empty_start = None
-        elapsed = 0
-        waste_alert = False
+            from detect import detect_people
+            results = detect_people(model, image)
+            people = len(results.boxes) if results.boxes is not None else 0
+            now = time.monotonic()
+            if people == 0:
+                if _mobile_empty_start is None:
+                    _mobile_empty_start = now
+                elapsed = int(now - _mobile_empty_start)
+                waste_alert = elapsed >= EMPTY_THRESHOLD_SECONDS
+            else:
+                _mobile_empty_start = None
+                elapsed = 0
+                waste_alert = False
 
-    annotated = results.plot()
-    ok, buffer = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
-    if ok:
-        with _frame_lock:
-            _latest_frame = buffer.tobytes()
-    with camera_state._lock:
-        camera_state.active = True
-        camera_state.source = "mobile"
-        camera_state.people_count = people
-        camera_state.status = "Occupied" if people > 0 else "Empty"
-        camera_state.energy_waste_alert = waste_alert
-        camera_state.empty_seconds = elapsed
-        camera_state.fps = 0.0
-        camera_state.error = ""
+            annotated = results.plot()
+            ok, buffer = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if not ok:
+                raise RuntimeError("Could not encode the annotated camera frame.")
+            with _frame_lock:
+                _latest_frame = buffer.tobytes()
+            fps = 1 / (now - _mobile_last_frame_at) if _mobile_last_frame_at is not None and now > _mobile_last_frame_at else 0.0
+            _mobile_last_frame_at = now
+            with camera_state._lock:
+                camera_state.active = True
+                camera_state.source = "mobile"
+                camera_state.people_count = people
+                camera_state.status = "Occupied" if people > 0 else "Empty"
+                camera_state.energy_waste_alert = waste_alert
+                camera_state.empty_seconds = elapsed
+                camera_state.fps = fps
+                camera_state.error = ""
+    except Exception as exc:
+        _mark_camera_inactive(f"Person detection failed: {exc}")
+        raise RuntimeError(f"Person detection failed: {exc}") from exc
 
     return {
         "message": "Mobile camera frame processed.",
@@ -132,6 +178,7 @@ def process_mobile_frame(frame_bytes: bytes) -> dict:
         "status": "Occupied" if people > 0 else "Empty",
         "energy_waste_alert": waste_alert,
         "empty_seconds": elapsed,
+        "fps": round(fps, 1),
     }
 
 # ---------------------------------------------------------------------------
@@ -145,9 +192,8 @@ def _detection_loop() -> None:
     if cv2 is None:
         try:
             import cv2
-        except ImportError:
-            camera_state.error = "OpenCV (cv2) not installed – run: pip install opencv-python"
-            camera_state.active = False
+        except Exception:
+            _mark_camera_inactive("OpenCV is not installed. Install opencv-python-headless and redeploy.")
             return
 
     # Lazy-import ultralytics so the server starts fast even when torch
@@ -155,15 +201,13 @@ def _detection_loop() -> None:
     try:
         from ultralytics import YOLO
     except ImportError:
-        camera_state.error = "ultralytics not installed – pip install ultralytics"
-        camera_state.active = False
+        _mark_camera_inactive("Ultralytics is not installed. Install the Backend requirements and redeploy.")
         return
 
     try:
         from detect import detect_people
     except ImportError as exc:
-        camera_state.error = f"Could not load Backend/detect.py: {exc}"
-        camera_state.active = False
+        _mark_camera_inactive(f"Could not load Backend/detect.py: {exc}")
         return
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -174,14 +218,12 @@ def _detection_loop() -> None:
     try:
         model = YOLO(model_path)
     except Exception as exc:
-        camera_state.error = f"Model load failed: {exc}"
-        camera_state.active = False
+        _mark_camera_inactive(f"Model load failed: {exc}")
         return
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        camera_state.error = "Cannot open webcam (index 0)"
-        camera_state.active = False
+        _mark_camera_inactive("Cannot open webcam (index 0). Use the browser camera on a hosted backend.")
         return
 
     with camera_state._lock:
@@ -194,11 +236,14 @@ def _detection_loop() -> None:
     while not _stop_event.is_set():
         ret, frame = cap.read()
         if not ret:
-            camera_state.error = "Failed to grab frame"
+            _mark_camera_inactive("Failed to read a frame from webcam index 0.")
             break
 
-        # --- YOLO detection ---
-        result = detect_people(model, frame, persist=True)
+        try:
+            result = detect_people(model, frame, persist=True)
+        except Exception as exc:
+            _mark_camera_inactive(f"Person detection failed: {exc}")
+            break
         people = len(result.boxes) if result.boxes is not None else 0
 
         # --- Empty-room timer ---
@@ -291,10 +336,11 @@ def stop_camera() -> dict:
     _stop_event.set()
     if _thread is not None:
         _thread.join(timeout=3)
-    with camera_state._lock:
-        camera_state.active = False
-        camera_state.status = "Inactive"
-        camera_state.source = "none"
+    global _mobile_empty_start, _mobile_last_frame_at
+    with _mobile_inference_lock:
+        _mobile_empty_start = None
+        _mobile_last_frame_at = None
+        _mark_camera_inactive()
     return {"message": "Camera stopped"}
 
 

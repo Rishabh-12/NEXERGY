@@ -49,11 +49,11 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
   useEffect(() => {
     if (!phoneStream) return undefined;
     let cancelled = false;
-    const timer = setInterval(async () => {
+    async function uploadFrame() {
       const video = phoneVideoRef.current;
       if (cancelled || mobileUploadBusy.current || !video || video.readyState < 2 || !video.videoWidth) return;
       if (backend?.status !== "online") {
-        if (!cancelled) setPhoneError("Camera preview is live, but person detection needs the NEXERGY backend. Deploy the Render service and the feed will connect automatically.");
+        if (!cancelled) setPhoneError("Camera preview is live, but person detection cannot reach the API. Start the local backend or check the deployed service URL, then retry.");
         return;
       }
       mobileUploadBusy.current = true;
@@ -72,8 +72,16 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
       } finally {
         mobileUploadBusy.current = false;
       }
-    }, 1400);
-    return () => { cancelled = true; clearInterval(timer); };
+    }
+    const video = phoneVideoRef.current;
+    video?.addEventListener("loadeddata", uploadFrame);
+    const timer = setInterval(uploadFrame, 1400);
+    uploadFrame();
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      video?.removeEventListener("loadeddata", uploadFrame);
+    };
   }, [backend?.status, phoneStream]);
 
   // Poll camera status while mounted
@@ -236,29 +244,31 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
           </div>
 
           <div className={`cv-feed-container ${cameraConnected ? "" : "cv-inactive"}`}>
-            {hasCameraPreview ? (
+            {hasCameraPreview && (
               <video
                 ref={phoneVideoRef}
                 autoPlay
                 playsInline
                 muted
                 aria-label="Live camera preview"
-                className="cv-feed-img"
+                className={`cv-feed-img ${isActive && cam?.source === "mobile" ? "cv-camera-capture-hidden" : ""}`}
               />
-            ) : isActive ? (
+            )}
+            {isActive && (!hasCameraPreview || cam?.source === "mobile") && (
               <img
                 src={getCameraFeedUrl()}
-                alt="Live camera feed"
+                alt="Live camera feed with backend person-detection annotations"
                 className="cv-feed-img"
               />
-            ) : (
+            )}
+            {!cameraConnected && (
               <div className="cv-placeholder">
                 <Camera size={64} strokeWidth={1} />
-                <h3>Camera Offline</h3>
+                <h3>{loading || phoneLoading ? "Connecting camera" : errorMsg ? "Camera could not start" : "Camera Offline"}</h3>
                 <p>
                   {phoneError || (backend?.status !== "online"
-                    ? "Press Start Camera to preview this device. Person detection needs the backend to be online."
-                    : errorMsg || "Click 'Start Camera' to begin real-time AI detection.")}
+                    ? "The API is not reachable. Start the backend locally or deploy the Render service, then try again."
+                    : errorMsg || "Click 'Start Camera' and allow browser camera access to begin real-time person detection.")}
                 </p>
               </div>
             )}
@@ -436,6 +446,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
           <p>Press Start Camera above on this device. On a phone, open NEXERGY over HTTPS to use its rear camera. The browser asks for permission only after you start it.</p>
           <div className="phone-camera-note"><ShieldCheck size={15}/><span>When the backend is online, compressed frames are sent about every 1.4 seconds for YOLO person detection. Occupancy updates sync to the shared room state and digital twin. No audio is captured.</span></div>
           {phoneError && !cameraConnected && <p className="phone-camera-error" role="alert">{phoneError}</p>}
+          {phoneLoading && !phoneError && <p className="phone-camera-error" role="status">Waiting for camera access. Allow the browser prompt, or enable Camera for this site in its address-bar settings.</p>}
           <div className="phone-camera-actions">
             {phoneStream ? <button type="button" className="cv-btn cv-btn-stop" onClick={disconnectPhoneCamera}><CameraOff size={15}/> Disconnect phone camera</button> : <button type="button" className="cv-btn cv-btn-start" disabled={phoneLoading} onClick={connectPhoneCamera}><Camera size={15}/>{phoneLoading ? "Connecting…" : "Connect phone camera"}</button>}
             <button type="button" className="phone-twin-link" onClick={() => onNavigate?.("twin")}>Open digital twin <ArrowUpRight size={14}/></button>
