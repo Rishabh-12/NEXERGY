@@ -6,9 +6,10 @@ Notable project changes are recorded here. This project does not have a tagged v
 
 ### Documentation
 
-- Replaced the starter README with project-specific setup, architecture, feature, API, and deployment documentation.
-- Added contribution and release guidance.
-- Clarified camera detection, Gemini key handling, backend deployment, and energy-estimate limitations.
+- Expanded the README with the live demo links, local run steps, deployment map, API overview, energy assumptions, and known limitations.
+- Added architecture/data-flow and Windows YOLO camera setup/troubleshooting guides.
+- Clarified which rooms use shared backend state, how camera telemetry is sent, where the Gemini key is stored, and which values are estimates.
+- Corrected contribution guidance to describe the separate GitHub Pages frontend and Render API deployment.
 
 ## Release process
 
