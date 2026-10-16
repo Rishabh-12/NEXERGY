@@ -1,0 +1,322 @@
+NEXENERGY — SMART CAMPUS ENERGY OPTIMIZER
+PROJECT FEATURES, DEMONSTRATION GUIDE, AND VIDEO TIMELINE
+Prepared: 16 October 2026
+
+======================================================================
+1. PROJECT SUMMARY
+======================================================================
+
+NexEnergy is a campus energy-optimization demonstration. It brings together
+a polished dashboard, an animated three-floor building, selectable classroom
+profiles, modeled energy scenarios, occupancy vision, explainable
+recommendations, and an optional Gemini-powered chat assistant.
+
+The project is designed to make room activity and energy choices easier to
+understand. A visitor can move from a campus overview to a floor and room,
+inspect simulated lighting and cooling equipment, adjust a scenario, and see
+how the modeled energy estimate changes.
+
+This is a demonstration and planning interface. It is not a building
+management system:
+
+  - Energy, cost, carbon, and savings figures are estimates, not meter readings.
+  - The interface does not switch real lights, air conditioners, or other
+    building equipment.
+  - Computer vision reports people in view. It does not identify them, detect
+    phones, or measure electrical use.
+  - The connected API currently shares the A-101 room state. Other room
+    profiles are illustrative sample scenarios.
+
+Live website:
+https://rishabh-12.github.io/code-cash/
+
+Source repository:
+https://github.com/Rishabh-12/code-cash
+
+======================================================================
+2. PROJECT FEATURES
+======================================================================
+
+2.1 Dashboard and animated building
+-----------------------------------
+
+The dashboard introduces the project with the “Energy has a place” hero
+section and a three-floor glass-and-steel building model. The model provides
+an architectural overview of the campus and responds visually to pointer
+movement. The page uses a blue editorial-style hero, short explanatory copy,
+an entry point to the Digital Twin, and a modeled energy summary.
+
+The dashboard also presents campus-level context such as occupancy, energy
+estimates, recent room events, and a building overview. Scroll-led sections
+connect the overview to room inspection and scenario comparison.
+
+2.2 Digital Twin: floors and rooms
+----------------------------------
+
+The illustrative building has three floors and nine named rooms. Visitors can
+select a floor, select one of its rooms, and inspect the selected space.
+Floor and room controls show modeled occupants and daily energy estimates.
+The building/story view uses animated architectural visuals and scrolling
+focus to guide attention between floors and room information.
+
+The nine example rooms are:
+
+  Ground floor: A-101 Learning studio, A-102 Seminar room,
+                A-103 Project lab
+  First floor:  A-201 Lecture hall, A-202 Study commons,
+                A-203 Design studio
+  Second floor: A-301 Research lab, A-302 Computer lab,
+                A-303 Quiet library
+
+The A-101 profile is marked as connected to shared backend room state. Other
+rooms provide local illustrative profiles for exploring the interface. They
+should not be interpreted as independently connected campus sensors.
+
+2.3 Classroom interior and controls
+-----------------------------------
+
+The room view provides a classroom-scale model with:
+
+  - A seating plan of up to 12 desks. Selecting a desk changes the simulated
+    occupancy.
+  - Ten individually represented ceiling-light fixtures.
+  - Three independent air-conditioning units.
+  - A target-temperature control.
+  - Room occupancy, equipment state, and modeled electrical load.
+  - Controls to return to the building and choose another room.
+
+The room controls make the result of a modeled change visible in the room
+presentation. The illustrated equipment ratings are 40 watts per light and
+600 watts per AC unit. A-101 controls synchronize with the app's shared
+room state; the other rooms remain example scenarios.
+
+2.4 Energy Simulator
+--------------------
+
+The simulator lets a presenter choose a room and change its modeled people
+count. The A-101 scenario also provides lighting, AC, temperature-setpoint,
+and operating-hour controls. The comparison chart animates when the scenario
+changes and compares baseline energy with the adjusted scenario.
+
+The demonstration calculates values using these example assumptions:
+
+  Lighting:    10 fixtures × 40 W each = 400 W maximum
+  Air cooling: 3 units × 600 W each   = 1,800 W maximum
+  Example tariff:                         ₹8 per kWh
+  Example carbon factor:                   0.82 kg CO2 per kWh
+
+  Estimated energy (kWh) = enabled equipment watts × hours ÷ 1,000
+  Estimated cost         = estimated kWh × ₹8
+  Estimated CO2          = estimated kWh × 0.82 kg
+  Estimated savings      = max(0, baseline kWh − scenario kWh)
+
+The values are intentionally labeled as modeled estimates. The app does not
+currently read a utility meter, local tariff feed, weather feed, or actual
+equipment telemetry. Occupancy is useful context for the interface and
+recommendations; the formula does not claim that a person directly changes
+the measured electrical load.
+
+2.5 Live AI Camera and occupancy
+--------------------------------
+
+The camera page supports two ways to report people:
+
+  1. Browser camera: use the computer's camera in a secure browser context and
+     run person detection in the browser.
+  2. Local Python camera agent: run detect.py on the computer that can access
+     a USB webcam or phone IP-camera stream. The YOLOv8 agent detects and
+     tracks people locally, then sends occupancy telemetry to the online API.
+
+The Python agent sends counts and status data, not video frames. Its request
+to the backend is protected by a private camera-ingest token. The page can
+show the room's occupancy and empty-room status, while the Digital Twin
+reflects the shared occupancy state for A-101.
+
+A phone preview depends on the phone stream URL, same-network connectivity,
+and browser mixed-content/security rules. If an HTTPS hosted page cannot
+display a local HTTP phone stream, run detect.py on the computer connected
+to that stream; the agent can still send person counts to the online backend.
+
+The system reports people only. It does not recognize identities, detect
+cell phones, store camera images through the Python agent, measure power, or
+control physical equipment.
+
+2.6 AI recommendations and monthly summary
+------------------------------------------
+
+The recommendation page presents explainable suggestions based on available
+room occupancy, equipment state, setpoint, and scenario estimates. Examples
+include reviewing lights or cooling in an empty room and considering a
+moderate AC setpoint. Backend recommendations can fall back to local
+rule-based suggestions when the service is unavailable.
+
+The page can also show a monthly run-rate projection. This extrapolates the
+current daily scenario across 30 days; it is a planning illustration, not
+historical meter data or a guaranteed saving.
+
+2.7 NexEnergy chat assistant
+----------------------------
+
+The floating chat panel answers questions about the selected room and energy
+scenario. It includes suggested questions, animated replies, and a Gemini
+settings panel. When a user supplies a Gemini API key, the browser keeps it
+in tab-scoped sessionStorage and sends it directly to Google's Gemini API.
+The prompt includes the app's current room and scenario context so a response
+can refer to the selected room, modeled occupancy, equipment, and estimated
+energy.
+
+If no Gemini key is configured, or a Gemini request fails, the assistant
+uses local project-aware responses. The chat key is not part of the
+repository or server configuration. Do not paste an API key into a public
+screen recording or commit.
+
+2.8 Theme, charts, and connected services
+-----------------------------------------
+
+The interface supports dark and light themes, responsive navigation,
+animated energy charts, room transitions, status indicators, and a floating
+chat launcher. The frontend is a React/Vite application. The Express API
+provides shared A-101 room state, camera status, simulation calculations,
+recommendations, and insight fallbacks.
+
+The public frontend is hosted on GitHub Pages. The API is hosted on Render.
+The Python camera agent runs locally on a computer with camera access. API
+room and camera state is currently held in process memory and resets when the
+service restarts; this demo does not use a persistent database.
+
+======================================================================
+3. SCREEN RECORDING TIMELINES
+======================================================================
+
+TIMESTAMP NOTE
+All times below are elapsed from the start of each supplied video and are
+approximate. Use the named on-screen section as the visual cue. The ranges
+summarize the recorded demonstration, not a guaranteed run order. Some clips
+hold on the same screen for several seconds.
+
+VIDEO 1
+File: Screen Recording 2026-10-16 161701.mp4
+Length: approximately 1 minute 31 seconds
+
+00:00–00:50  Dashboard hero and three-floor model
+The recording opens on the blue “Energy has a place” front page. The 3D
+building shows three stacked classroom floors, with a modeled campus
+identity, energy estimate, and a button to enter the Digital Twin. The
+building is the visual centerpiece; pointer movement gives the model a
+responsive, dimensional feel.
+
+00:50–01:00  Move from the landing view into room inspection
+The view changes from the hero/dashboard to the Digital Twin room experience.
+This is the transition from the campus overview to a specific modeled space.
+
+01:00–01:31  Seminar-room equipment and seating plan
+The room view shows the ten-light ceiling array, three AC controls, target
+temperature, and 12-seat occupancy grid. The selected seminar-room example
+shows occupied and vacant desks and a modeled load. The screen labels the
+room model and estimated load, making clear that the displayed watts are
+assumptions rather than measured consumption.
+
+VIDEO 2
+File: Screen Recording 2026-10-16 161837.mp4
+Length: approximately 52 seconds
+
+00:00–00:52  A-101 occupancy-focused Digital Twin
+The clip presents the A-101 room experience. A horizontal row of room
+selectors provides access to the nine modeled spaces, with A-101 identified
+as live/synchronized in this capture. The large classroom visualization
+shows green occupant markers positioned over desks.
+
+The left-side “Agentic Occupancy” story panel explains that YOLOv8 headcount
+can be mapped to classroom desks. The displayed sample reads 3 of 12 people,
+2.20 kW active modeled load, and 72% efficiency. The “Open YOLOv8 Live
+Camera” action links the room view to the camera workflow. Room-control and
+equipment-automation sections are visible below the main visualization.
+
+VIDEO 3
+File: Screen Recording 2026-10-16 163540.mp4
+Length: approximately 2 minutes 9 seconds
+
+00:00–02:09  Front-page building showcase
+This recording stays on the dashboard's blue landing hero in the sampled
+frames. It showcases the “Energy has a place” heading, the transparent
+three-floor classroom building, campus context, estimated-energy card, and
+Digital Twin entry action. The building remains the focus throughout this
+clip; the recording does not visibly demonstrate opening the other app
+modules.
+
+VIDEO 4
+File: Screen Recording 2026-10-16 163741.mp4
+Length: approximately 48 seconds
+
+00:00–00:34  Local person-detection agent output
+The terminal shows camera-agent output from a detection session: changing
+person counts, tracked people, entry/exit counts, frame-rate values, and
+occupied/empty status. The log also shows an empty-room energy alert being
+raised or cleared based on the reported people count. These are agent and
+scenario signals, not electrical meter measurements.
+
+00:34–00:48  Start the camera setup again
+The recording shows PowerShell environment setup and the detect.py launch.
+The camera source menu offers a laptop/USB camera or a mobile IP stream. The
+clip ends at the camera-source selection prompt, so it does not show a fresh
+camera preview from this new launch.
+
+SECURITY BEFORE SHARING VIDEO 4
+The terminal recording visibly includes a camera-ingest token in a command.
+Do not publish or submit that video as-is. Rotate/revoke the exposed token in
+the Render service, set the replacement token privately in Render and in the
+local PowerShell session, and make a redacted recording before sharing. This
+document intentionally does not reproduce the token.
+
+======================================================================
+4. HOW THE PARTS WORK TOGETHER
+======================================================================
+
+  Browser frontend (GitHub Pages)
+    - Renders the dashboard, Digital Twin, camera page, simulator,
+      recommendations, charts, and chat.
+
+  Express API (Render)
+    - Shares A-101 room and camera status.
+    - Calculates scenario estimates and returns recommendations/insights.
+    - Protects Python-agent occupancy posts with the camera-ingest token.
+
+  Camera computer
+    - Runs detect.py next to the webcam or phone stream.
+    - Processes frames locally with YOLOv8 person detection/tracking.
+    - Sends occupancy and status telemetry to the API; it does not upload
+      video frames through the Python agent.
+
+  Gemini (optional)
+    - Receives a user's question and current app context directly from the
+      browser when the user configured a Gemini API key.
+
+Typical demonstration flow:
+  1. Open the dashboard and introduce the three-floor building.
+  2. Enter the Digital Twin and select a floor and room.
+  3. Inspect desk occupancy, lights, AC units, temperature, and estimated
+     room load.
+  4. Open the Energy Simulator, change people/equipment/hours, and compare
+     the animated baseline and scenario chart.
+  5. Review recommendations or ask NexEnergy chat about the selected
+     room. Configure Gemini only if live generative responses are desired.
+  6. For a camera demonstration, run detect.py on the camera computer and
+     keep the private token out of screen recordings and public repositories.
+
+======================================================================
+5. REPOSITORY GUIDES AND REVIEW SCOPE
+======================================================================
+
+README.md                         Project overview and getting started
+docs/ARCHITECTURE.md              Components, data flow, API, assumptions
+docs/CAMERA_SETUP.md              Windows camera setup and troubleshooting
+CHANGELOG.md                      Project changes and release history
+CONTRIBUTING.md                   Development and contribution notes
+
+The additional Google Drive reference folder supplied with the request could
+not be opened in this review. This document is based on the four screen
+recordings and the current repository documentation and implementation.
+
+======================================================================
+END
+======================================================================

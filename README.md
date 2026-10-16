@@ -66,7 +66,7 @@ flowchart LR
   Browser -->|chat prompt + app context + user key| Gemini
 ```
 
-The full architecture, data flow, assumptions, API routes, and limitations are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Camera setup and troubleshooting are in [docs/CAMERA_SETUP.md](docs/CAMERA_SETUP.md).
+The full architecture, data flow, assumptions, API routes, and limitations are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Camera setup and troubleshooting are in [docs/CAMERA_SETUP.md](docs/CAMERA_SETUP.md). The detailed [project features and screen-recording timeline](docs/PROJECT_FEATURES_AND_VIDEO_TIMELINE.txt) documents the demo flow and timestamps for each supplied video.
 
 ### Energy model used by this demo
 
