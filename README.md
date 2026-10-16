@@ -1,6 +1,10 @@
 # NexEnergy — Smart Campus Energy Optimizer
 
-NexEnergy is a production-grade campus energy optimizer that combines a 3D multi-floor digital twin (Three.js), real-time computer-vision occupancy tracking (in-browser Coco-SSD / mobile IP stream), what-if energy simulations, and project-aware Gemini AI guidance. It helps campus facilities teams identify energy waste and model operational savings.
+[![GitHub Pages deployment](https://github.com/Rishabh-12/code-cash/actions/workflows/deploy-pages.yml/badge.svg?branch=main)](https://github.com/Rishabh-12/code-cash/actions/workflows/deploy-pages.yml)
+
+**[Open the live app](https://rishabh-12.github.io/code-cash/)**
+
+NexEnergy is a campus energy-optimization demo that brings together a multi-floor 3D digital twin, camera-based occupancy detection, what-if energy simulations, and energy-saving recommendations.
 
 > **Energy values are estimates.** The camera detects people; it does not measure electricity or equipment power. Consumption, cost, and savings are modeled from equipment assumptions and calibrated benchmarks.
 
@@ -23,6 +27,13 @@ NexEnergy is a production-grade campus energy optimizer that combines a 3D multi
 
 ## Getting Started
 
+### Requirements
+
+- Node.js 20 or newer
+- npm
+
+### Run locally
+
 ```bash
 # Install dependencies
 npm install
@@ -34,10 +45,11 @@ npm run dev
 npm run build
 ```
 
+### Deployment
 
-## Deploy online
+GitHub Actions builds and publishes the Vite app to [GitHub Pages](https://rishabh-12.github.io/code-cash/). The workflow is defined in `.github/workflows/deploy-pages.yml`; pushes to `main` and manual workflow dispatches deploy the site.
 
-The GitHub Actions workflow builds the current root Vite app and publishes it to `https://rishabh-12.github.io/code-cash/`. The Render blueprint deploys the Node/Express API at `https://campusiq-api.onrender.com`. Import this repository in Render using `render.yaml`; keep the GitHub Pages Actions workflow enabled in the repository's Pages settings. The app calls the same-origin API locally and the Render API when built for Pages.
+The `render.yaml` blueprint configures the Node/Express API at `https://campusiq-api.onrender.com`. To deploy the API, create a Render service from this repository using that blueprint and set its private `CAMERA_INGEST_TOKEN` environment variable. The frontend uses the local development API while running locally and the configured Render API on GitHub Pages.
 
 Render's free service can sleep while idle. The first API request after it sleeps may take a little longer while the service starts.
 

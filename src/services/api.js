@@ -56,7 +56,7 @@ const localBackendState = {
   ],
 };
 
-async function request(path, options = {}) {
+async function requestWithSource(path, options = {}) {
   const base = getApiUrl();
   try {
     const response = await fetch(`${base}${path}`, {
@@ -66,14 +66,20 @@ async function request(path, options = {}) {
     if (!response.ok) {
       throw new Error(`API ${path} returned ${response.status}`);
     }
+    const data = await response.json();
     apiAvailable = true;
-    return await response.json();
+    return { data, source: "backend" };
   } catch {
     apiAvailable = false;
     // Keep sample data available while disconnected, but expose the real link status.
   }
 
-  return simulateBackendResponse(path, options);
+  return { data: simulateBackendResponse(path, options), source: "local" };
+}
+
+async function request(path, options = {}) {
+  const { data } = await requestWithSource(path, options);
+  return data;
 }
 
 function simulateBackendResponse(path, options) {
@@ -289,6 +295,10 @@ export function getRoomState() {
   return request("/room-state");
 }
 
+export function getRoomStateWithSource() {
+  return requestWithSource("/room-state");
+}
+
 export function sendOccupancy(peopleCount, extra = {}) {
   return request("/update-occupancy", {
     method: "POST",
@@ -300,8 +310,26 @@ export function sendOccupancy(peopleCount, extra = {}) {
   });
 }
 
+export function sendOccupancyWithSource(peopleCount, extra = {}) {
+  return requestWithSource("/update-occupancy", {
+    method: "POST",
+    body: JSON.stringify({
+      people_count: peopleCount,
+      occupancy_count: peopleCount,
+      ...extra,
+    }),
+  });
+}
+
 export function runSimulation(appliances) {
   return request("/simulate", {
+    method: "POST",
+    body: JSON.stringify(appliances),
+  });
+}
+
+export function runSimulationWithSource(appliances) {
+  return requestWithSource("/simulate", {
     method: "POST",
     body: JSON.stringify(appliances),
   });
@@ -388,4 +416,3 @@ export function saveSyncConfig(config) {
     body: JSON.stringify(config),
   });
 }
-

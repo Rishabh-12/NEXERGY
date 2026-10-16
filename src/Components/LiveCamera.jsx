@@ -116,6 +116,11 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
   const frameCountRef = useRef(0);
   const fpsTimerRef = useRef(performance.now());
   const isDetectingRef = useRef(false);
+  const settingsRef = useRef(settings);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   // Attach webcam stream to <video> element
   useEffect(() => {
@@ -233,7 +238,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
           const isWaste =
             detectedPeopleCount === 0 &&
             emptySec >= 3 &&
-            Boolean(settings?.lightsOn || settings?.acOn);
+            Boolean(settingsRef.current?.lightsOn || settingsRef.current?.acOn);
 
           const statusStr = detectedPeopleCount > 0 ? "Occupied" : "Empty";
 
@@ -259,8 +264,8 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
               status: statusStr,
               empty_seconds: emptySec,
               energy_waste_alert: isWaste,
-              lights_on: settings?.lightsOn,
-              ac_on: settings?.acOn,
+              lights_on: settingsRef.current?.lightsOn,
+              ac_on: settingsRef.current?.acOn,
             }).catch(() => {});
 
           }
@@ -271,7 +276,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
     if (isDetectingRef.current) {
       animFrameRef.current = requestAnimationFrame(runDetection);
     }
-  }, [backend?.status, settings?.lightsOn, settings?.acOn]);
+  }, []);
 
   // Start the live camera (Webcam with in-browser AI detection & backend sync)
   async function handleStart() {
