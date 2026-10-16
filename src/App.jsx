@@ -8,10 +8,9 @@ import Recommendations from "./Components/Recommendations";
 import EnergyChat from "./Components/EnergyChat";
 import { FLOORS } from "./Components/campusData";
 import {
-  getRoomState,
-  isApiAvailable,
-  sendOccupancy,
-  runSimulation,
+  getRoomStateWithSource,
+  sendOccupancyWithSource,
+  runSimulationWithSource,
 } from "./services/api";
 import {
   CLASSROOM_CAPACITY,
@@ -105,9 +104,9 @@ export default function App() {
 
     async function poll() {
       try {
-        const state = await getRoomState();
+        const { data: state, source } = await getRoomStateWithSource();
         if (cancelled) return;
-        if (!isApiAvailable()) {
+        if (source !== "backend") {
           if (lastBackendStatus.current !== "offline") {
             recordEvent("offline", "Backend connection unavailable", "Showing local controls and estimates until the service responds.", "INTERFACE");
             lastBackendStatus.current = "offline";
@@ -187,8 +186,12 @@ export default function App() {
     setSettings((s) => ({ ...s, occupancy: count }));
 
     try {
-      const result = await sendOccupancy(count);
-      setBackend({ status: "online", message: result.message ?? "" });
+      const { data: result, source } = await sendOccupancyWithSource(count);
+      setBackend((b) => ({
+        ...b,
+        status: source === "backend" ? "online" : "offline",
+        message: source === "backend" ? result.message ?? "" : "",
+      }));
     } catch {
       setBackend({ status: "offline", message: "" });
     }
@@ -214,16 +217,21 @@ export default function App() {
   async function applySimulation() {
     setApplying(true);
     try {
-      const result = await runSimulation(buildSimulationPayload({ ...settings, lightUnits: selectedEquipment.lights, acUnits: selectedEquipment.acs }));
+      const { data: result, source } = await runSimulationWithSource(buildSimulationPayload({ ...settings, lightUnits: selectedEquipment.lights, acUnits: selectedEquipment.acs }));
       setApplied({
         simulated: result.simulated_energy_kwh,
         savings: result.energy_saved_kwh,
         cost: result.predicted_savings_rupees,
         carbon: result.carbon_saved_kg,
-        source: "backend",
+        source,
       });
-      recordEvent("simulation", "Simulation completed", `${result.energy_saved_kwh.toFixed(2)} kWh estimated savings · backend calculation.`, "BACKEND");
-      setBackend((b) => ({ ...b, status: "online" }));
+      recordEvent(
+        "simulation",
+        source === "backend" ? "Simulation completed" : "Simulation preview applied",
+        `${result.energy_saved_kwh.toFixed(2)} kWh estimated savings · ${source === "backend" ? "backend calculation" : "local estimate"}.`,
+        source === "backend" ? "BACKEND" : "LOCAL ESTIMATE",
+      );
+      setBackend((b) => ({ ...b, status: source === "backend" ? "online" : "offline" }));
     } catch {
       const savings = calculateSavings({ baseline: baselineEnergy, simulated: simulatedEnergy });
       setApplied({
