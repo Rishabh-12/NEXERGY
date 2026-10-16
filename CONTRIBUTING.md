@@ -1,36 +1,20 @@
 # Contributing to NexEnergy
 
-Thanks for helping improve the Smart Campus Energy Optimizer.
-
-## Before you start
-
-- Check the README for frontend/backend setup and deployment details.
-- For a larger change, open an issue first to agree on the scope.
-- Keep changes focused and preserve current API behavior unless an API change is intentional and documented.
+The application lives at the repository root. It uses React/Vite for the interface and an Express API in `server.ts`; the API and web app run together in development and production.
 
 ## Local development
 
-Run the FastAPI backend and Vite frontend in separate terminals as described in the [README](README.md#run-locally). The frontend is in `Frontend/part 2`; the backend is in `Backend`.
-
-Before submitting frontend changes, run:
-
 ```bash
-cd "Frontend/part 2"
-npm run lint
-npm run build
+npm install
+npm run dev
 ```
 
-The frontend deployment workflow runs these checks automatically. There is currently no automated backend test suite.
+Open `http://localhost:3000`. To verify a production build, run `npm run build`. To check the bundled Python camera agent syntax, run `py -m py_compile detect.py`.
 
-## Pull requests
+## Camera agent
 
-- Use a short, descriptive branch name such as `fix/camera-permissions` or `docs/setup-guide`.
-- Explain the user-visible change and how you checked it.
-- Include screenshots for visible UI changes when practical.
-- Update the README or changelog if setup, behavior, API, or deployment instructions change.
-- Do not commit API keys, `.env` files, generated build output, or private camera footage.
-- Keep energy consumption and savings labeled as estimates unless backed by connected meter readings. Vision changes must remain person-only and must not describe detections as energy measurements.
+The browser camera uses the browser person detector and syncs occupancy to the API. For YOLOv8, install `requirements-vision.txt` and run `detect.py` on the device that can access the webcam or phone IP stream. Set `BACKEND_URL` to the API `/update-occupancy` endpoint. Set `CAMERA_INGEST_TOKEN` to the same private value configured on the API host. Never commit the token, webcam images, or downloaded model weights.
 
-## Releases
+## Deployment
 
-Add unreleased changes to `CHANGELOG.md`. Version tags and GitHub release notes are created from `main` after the release contents are reviewed; see the release process in the changelog.
+GitHub Actions builds the current root frontend for GitHub Pages. `render.yaml` configures the Node API service. Keep its `CORS_ORIGINS` value aligned with the frontend domain.

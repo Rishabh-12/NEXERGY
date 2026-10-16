@@ -8,9 +8,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || 'https://rishabh-12.github.io,http://localhost:3000')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origin is not allowed by CORS configuration'));
+  },
+}));
 app.use(express.json({ limit: '10mb' }));
 
 // --- Server Memory State (matches original NexEnergy backend) ---
@@ -18,18 +27,20 @@ const roomState = {
   AC: true,
   'Ceiling Fan': true,
   'Gaming PC': false,
+  Lights: true,
   people_count: 3,
   energy_waste_alert: false,
 };
 
 const cameraState = {
   active: false,
-  source: 'laptop',
-  people_count: 3,
-  status: 'Occupied',
+  source: null,
+  people_count: 0,
+  status: 'Inactive',
   empty_seconds: 0,
   energy_waste_alert: false,
   fps: 0,
+  updated_at: null,
 };
 
 const historicalData = [
@@ -40,11 +51,11 @@ const historicalData = [
   { date: '2026-10-14', energy_kwh: 46.8, cost_rupees: 374.4, peak_occupancy: 14 },
 ];
 
-// External sync configuration (dummy repo: Rishabh-12/Nexenergy)
+// Project API configuration
 let syncConfig = {
   originalRepo: 'https://github.com/Rishabh-12/code-cash',
-  targetRepo: 'https://github.com/Rishabh-12/Nexenergy',
-  customServerUrl: 'https://nexenergy-api.onrender.com',
+  targetRepo: 'https://github.com/Rishabh-12/code-cash',
+  customServerUrl: 'https://campusiq-api.onrender.com',
   syncedAt: new Date().toISOString(),
   syncStatus: 'connected',
 };
@@ -59,9 +70,10 @@ const handleHealth = (req: express.Request, res: express.Response) => {
     version: '2.0.0',
     repos: {
       original: 'https://github.com/Rishabh-12/code-cash',
-      dummySyncRepo: 'https://github.com/Rishabh-12/Nexenergy',
+      target: 'https://github.com/Rishabh-12/code-cash',
     },
     syncStatus: syncConfig.syncStatus,
+    cameraIngestConfigured: Boolean(process.env.CAMERA_INGEST_TOKEN),
     docs: '/api/docs',
   });
 };
@@ -79,32 +91,60 @@ const handleGetRoomState = (req: express.Request, res: express.Response) => {
 app.get('/room-state', handleGetRoomState);
 app.get('/api/room-state', handleGetRoomState);
 
-// Update Occupancy
+// Update occupancy reported by browser vision or the local YOLO camera agent.
 const handleUpdateOccupancy = (req: express.Request, res: express.Response) => {
-  const count = req.body.occupancy_count ?? req.body.people_count ?? 0;
-  const people = Math.max(0, count);
+  const isPythonAgent = req.body.source === 'python-yolo';
+  const expectedToken = process.env.CAMERA_INGEST_TOKEN;
+  if (isPythonAgent && !expectedToken) {
+    return res.status(503).json({ error: 'Camera ingest is not configured. Set CAMERA_INGEST_TOKEN on the backend.' });
+  }
+  if (isPythonAgent && req.get('x-camera-token') !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid camera agent token.' });
+  }
+
+  const rawCount = Number(req.body.occupancy_count ?? req.body.people_count ?? 0);
+  const people = Math.max(0, Math.min(12, Number.isFinite(rawCount) ? Math.round(rawCount) : 0));
+  if (typeof req.body.lights_on === 'boolean') roomState.Lights = req.body.lights_on;
+  if (typeof req.body.ac_on === 'boolean') roomState.AC = req.body.ac_on;
 
   roomState.people_count = people;
-  if (typeof req.body.energy_waste_alert === 'boolean') {
-    roomState.energy_waste_alert = req.body.energy_waste_alert;
-  } else {
-    roomState.energy_waste_alert = people === 0 && (roomState.AC || roomState['Ceiling Fan']);
-  }
+  roomState.energy_waste_alert = typeof req.body.energy_waste_alert === 'boolean'
+    ? req.body.energy_waste_alert
+    : people === 0 && (roomState.AC || roomState.Lights || roomState['Ceiling Fan']);
 
-  let message = '';
-  if (people === 0) {
-    roomState.AC = false;
-    roomState['Ceiling Fan'] = false;
-    message = 'Room appears empty. Simulated AC and fan switched OFF.';
-  } else {
-    roomState.AC = true;
-    roomState['Ceiling Fan'] = true;
-    message = `${people} people detected. Simulated AC and fan switched ON.`;
-  }
+  const hours = Math.max(0, Math.min(24, Number(req.body.operating_hours) || 2));
+  const powerW = (roomState.Lights ? 400 : 0) + (roomState.AC ? 1800 : 0);
+  const energyKwh = Number(((powerW * hours) / 1000).toFixed(2));
+  const potentialSavingsKwh = roomState.energy_waste_alert ? energyKwh : 0;
+  const source = isPythonAgent ? 'python-yolo' : (req.body.source || 'browser-vision');
+
+  Object.assign(cameraState, {
+    active: true,
+    source,
+    people_count: people,
+    status: people > 0 ? 'Occupied' : 'Empty',
+    empty_seconds: Math.max(0, Number(req.body.empty_seconds) || 0),
+    energy_waste_alert: roomState.energy_waste_alert,
+    fps: Math.max(0, Number(req.body.fps) || cameraState.fps || 0),
+    inference_ms: Math.max(0, Number(req.body.inference_ms) || 0),
+    updated_at: new Date().toISOString(),
+  });
 
   res.json({
-    message,
+    message: roomState.energy_waste_alert
+      ? `Potential waste: the room is empty while modeled equipment remains on (${energyKwh.toFixed(2)} kWh for ${hours} hours).`
+      : `${people} ${people === 1 ? 'person' : 'people'} detected in A-101.`,
     current_room_state: roomState,
+    camera_state: cameraState,
+    telemetry: {
+      power_w: powerW,
+      estimated_energy_kwh: energyKwh,
+      estimated_cost_rupees: Number((energyKwh * 8).toFixed(2)),
+      potential_savings_kwh: potentialSavingsKwh,
+      potential_savings_rupees: Number((potentialSavingsKwh * 8).toFixed(2)),
+      period_hours: hours,
+      is_estimate: true,
+    },
   });
 };
 app.post('/update-occupancy', handleUpdateOccupancy);
@@ -275,7 +315,7 @@ const handleGenerateInsight = (req: express.Request, res: express.Response) => {
   res.json({
     source: 'nexenergy-engine',
     ai_insight: insight,
-    model: 'NexEnergy AI Engine (Synced with Rishabh-12/Nexenergy)',
+    model: 'NexEnergy AI Engine (NexEnergy backend rules)',
     vision_context: {
       people_count: people,
       room_status: people > 0 ? 'Occupied' : 'Empty',
@@ -293,27 +333,40 @@ app.post('/api/generate-insight', handleGenerateInsight);
 
 // Camera Endpoints
 app.get('/camera/status', (req, res) => {
+  const lastUpdate = cameraState.updated_at ? Date.parse(cameraState.updated_at) : 0;
+  if (cameraState.active && lastUpdate && Date.now() - lastUpdate > 8000) {
+    cameraState.active = false;
+    cameraState.source = null;
+    cameraState.status = 'Inactive';
+  }
+  const powerW = (roomState.Lights ? 400 : 0) + (roomState.AC ? 1800 : 0);
+  const energyKwh = Number(((powerW * 2) / 1000).toFixed(2));
   res.json({
     ...cameraState,
     people_count: roomState.people_count,
     energy_waste_alert: roomState.energy_waste_alert,
-    status: roomState.people_count > 0 ? 'Occupied' : 'Empty',
+    status: cameraState.active ? (roomState.people_count > 0 ? 'Occupied' : 'Empty') : 'Inactive',
+    estimated_energy_kwh: energyKwh,
+    estimated_cost_rupees: Number((energyKwh * 8).toFixed(2)),
+    potential_savings_kwh: roomState.energy_waste_alert ? energyKwh : 0,
+    is_estimate: true,
   });
 });
 app.post('/camera/start', (req, res) => {
   cameraState.active = true;
-  cameraState.source = req.body.source || 'laptop';
+  cameraState.source = req.body.source || 'browser';
+  cameraState.updated_at = new Date().toISOString();
   res.json({ status: 'started', source: cameraState.source });
 });
 app.post('/camera/stop', (req, res) => {
   cameraState.active = false;
+  cameraState.source = null;
+  cameraState.updated_at = new Date().toISOString();
   res.json({ status: 'stopped' });
 });
 app.post('/camera/mobile-frame', (req, res) => {
-  res.json({
-    status: 'frame_received',
-    people_count: roomState.people_count,
-    energy_waste_alert: roomState.energy_waste_alert,
+  res.status(410).json({
+    error: 'Raw frame inference is not provided by this endpoint. Use browser vision or run detect.py on the camera device to send occupancy telemetry.',
   });
 });
 
@@ -332,7 +385,7 @@ async function startServer() {
     const distPath = path.resolve(__dirname, 'dist');
     if (fs.existsSync(distPath)) {
       app.use(express.static(distPath));
-      app.get('*', (req, res) => {
+      app.use((req, res) => {
         res.sendFile(path.resolve(distPath, 'index.html'));
       });
     }

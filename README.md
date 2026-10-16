@@ -33,3 +33,29 @@ npm run dev
 # Build for production
 npm run build
 ```
+
+
+## Deploy online
+
+The GitHub Actions workflow builds the current root Vite app and publishes it to `https://rishabh-12.github.io/code-cash/`. The Render blueprint deploys the Node/Express API at `https://campusiq-api.onrender.com`. Import this repository in Render using `render.yaml`; keep the GitHub Pages Actions workflow enabled in the repository's Pages settings. The app calls the same-origin API locally and the Render API when built for Pages.
+
+Render's free service can sleep while idle. The first API request after it sleeps may take a little longer while the service starts.
+
+## Run the YOLO camera agent
+
+`detect.py` is a local camera agent based on the supplied YOLOv8 script. Run it on the computer that can access the USB webcam or phone IP stream. It detects people only and posts occupancy, empty-room duration, and inference data to the online API. The hosted backend cannot directly open a camera attached to your computer; the Python agent bridges that camera to the app.
+
+1. Generate a private value with `py -c "import secrets; print(secrets.token_urlsafe(32))"`. Set it as `CAMERA_INGEST_TOKEN` in the Render service settings, then use the same value in the terminal where you launch the agent. Never commit the token.
+2. Install Python 3.10 or newer, then run in PowerShell:
+
+   ```powershell
+   cd C:\Users\Rishabh\Downloads\code-cash
+   py -m pip install -r requirements-vision.txt
+   $env:BACKEND_URL = "https://campusiq-api.onrender.com/update-occupancy"
+   $env:CAMERA_INGEST_TOKEN = "paste-the-same-private-value-from-Render"
+   py detect.py
+   ```
+
+3. Choose `1` for a webcam or `2` and enter the phone camera's stream URL. Keep the script running; the Dashboard, Digital Twin, and Live Camera page refresh from the shared backend state.
+
+The camera provides occupancy only. Energy, cost, and potential savings are estimates from modeled lighting and AC loads, not meter readings. The browser camera works separately over HTTPS and also syncs its detections to the API.

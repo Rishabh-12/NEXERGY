@@ -25,13 +25,12 @@ import {
   getCameraStatus,
   getCameraFeedUrl,
   fetchAiInsight,
-  sendMobileCameraFrame,
   sendOccupancy,
   getApiUrl,
   setCustomApiUrl,
 } from "../services/api";
 
-const POLL_MS = 800;
+const POLL_MS = 1200;
 
 // Lazy global loader for in-browser coco-ssd detection model
 let cachedCocoModel = null;
@@ -264,22 +263,6 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
               ac_on: settings?.acOn,
             }).catch(() => {});
 
-            // Also upload a compressed frame to /camera/mobile-frame if backend supports it
-            if (backend?.status === "online") {
-              try {
-                const offCanvas = document.createElement("canvas");
-                offCanvas.width = Math.min(video.videoWidth, 480);
-                offCanvas.height = Math.round((video.videoHeight / video.videoWidth) * offCanvas.width);
-                const offCtx = offCanvas.getContext("2d");
-                if (offCtx) {
-                  offCtx.drawImage(video, 0, 0, offCanvas.width, offCanvas.height);
-                  const frameData = offCanvas.toDataURL("image/jpeg", 0.55).split(",")[1];
-                  if (frameData) {
-                    sendMobileCameraFrame(frameData).catch(() => {});
-                  }
-                }
-              } catch {}
-            }
           }
         }
       }
@@ -311,6 +294,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
         });
         setWebcamStream(stream);
         setWebcamActive(true);
+        startCamera("browser").then(setCam).catch(() => {});
         isDetectingRef.current = true;
         animFrameRef.current = requestAnimationFrame(runDetection);
       }
@@ -346,11 +330,9 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
       }
       setWebcamActive(false);
 
-      if (backend?.status === "online") {
-        await stopCamera();
-        const s = await getCameraStatus();
-        setCam(s);
-      }
+      await stopCamera();
+      const s = await getCameraStatus();
+      setCam(s);
       setDetectionStatus("Inactive");
       setLivePeople(0);
       setLiveEmptySec(0);
@@ -402,20 +384,16 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
       localStorage.setItem("nexenergy_phone_camera_ip", url);
     } catch {}
 
+    if (window.location.protocol === "https:" && url.startsWith("http://")) {
+      setPhoneError("This secure website cannot display an HTTP phone stream. Run detect.py on this computer and choose option 2 to send YOLO occupancy to the live site.");
+      return;
+    }
+
     setPhoneLoading(true);
     try {
-      // Connect backend OpenCV / YOLO directly to the IP camera stream
-      if (backend?.status === "online") {
-        await startCamera(url);
-        const s = await getCameraStatus();
-        setCam(s);
-      }
       setPhoneStreamUrl(url);
       setPhoneConnected(true);
-    } catch (err) {
-      // Even if backend is not yet online, preview the stream directly
-      setPhoneStreamUrl(url);
-      setPhoneConnected(true);
+      setPhoneError("");
     } finally {
       setPhoneLoading(false);
     }
@@ -489,13 +467,16 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
   const empty = isWebcamLive ? liveEmptySec : cam?.empty_seconds ?? 0;
   const fps = isWebcamLive ? liveFps : cam?.fps ?? 0;
   const status = isWebcamLive ? detectionStatus : cam?.status ?? (cameraConnected ? "Occupied" : "Inactive");
+  const currentEnergyKwh = Number.isFinite(cam?.estimated_energy_kwh) ? cam.estimated_energy_kwh : energyEstimate;
+  const idleSavingsKwh = waste ? currentEnergyKwh : 0;
+  const emptyAlertThreshold = cam?.source === "python-yolo" ? 10 : 3;
 
   return (
     <section className="page active">
       <PageHeader
         eyebrow="AI COMPUTER VISION"
         title="Live Camera Feed"
-        subtitle="Real-time YOLOv8 & computer vision person detection with automated energy-waste monitoring."
+        subtitle="Browser person detection or connected YOLOv8 camera agent, synced to room estimates."
         pill={cameraConnected ? "Vision active" : "Camera inactive"}
       />
 
@@ -565,14 +546,14 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
           }}
         >
           <label style={{ display: "block", marginBottom: "6px", fontWeight: "600" }}>
-            Backend API Endpoint (e.g. http://localhost:8000 or http://10.2.3.115:8000):
+            Backend API base URL (leave the default unless your API is hosted elsewhere):
           </label>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <input
               type="text"
               value={customApiUrlInput}
               onChange={(e) => setCustomApiUrlInput(e.target.value)}
-              placeholder="http://localhost:8000"
+              placeholder="https://campusiq-api.onrender.com"
               style={{
                 flex: "1 1 280px",
                 padding: "6px 10px",
@@ -597,7 +578,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
               style={{ padding: "6px 12px", fontSize: "11px", border: "1px solid var(--line)" }}
               onClick={() => {
                 setCustomApiUrl("");
-                setCustomApiUrlInput(import.meta.env.PROD ? "https://nexenergy-api.onrender.com" : "http://localhost:8000");
+                setCustomApiUrlInput(import.meta.env.PROD ? "https://campusiq-api.onrender.com" : "http://localhost:3000");
                 window.location.reload();
               }}
             >
@@ -653,7 +634,14 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
           </div>
 
           <div className={`cv-feed-container ${cameraConnected ? "" : "cv-inactive"}`} style={{ position: "relative" }}>
-            {streamMode === "backend" && isBackendStreamActive ? (
+            {cam?.active && cam?.source === "python-yolo" ? (
+              <div className="cv-placeholder">
+                <Users size={54} strokeWidth={1.2} />
+                <h3>YOLO camera agent connected</h3>
+                <p>The Python detector is running on the camera device. Live occupancy and estimated energy are updating from the shared backend.</p>
+                {Number.isFinite(cam?.inference_ms) && cam.inference_ms > 0 && <small>{cam.inference_ms.toFixed(0)} ms inference · {cam.fps || 0} FPS</small>}
+              </div>
+            ) : streamMode === "backend" && isBackendStreamActive ? (
               <img
                 src={getCameraFeedUrl()}
                 alt="Live camera feed from backend"
@@ -807,7 +795,20 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
                 style={{ width: `${Math.min(100, (empty / 10) * 100)}%` }}
               />
             </div>
-            <p className="cv-stat-hint">Alert triggers after 3 s empty</p>
+            <p className="cv-stat-hint">Alert threshold: {emptyAlertThreshold} s empty</p>
+          </div>
+
+          {/* Modeled energy */}
+          <div className="cv-stat-card">
+            <p className="eyebrow">MODELED ENERGY · 2 HOURS</p>
+            <div className="cv-stat-row">
+              <Gauge size={20} />
+              <div>
+                <span className="cv-stat-label">Estimated room use</span>
+                <strong className="cv-stat-value">{Number(currentEnergyKwh || 0).toFixed(2)} kWh</strong>
+              </div>
+            </div>
+            <p className="cv-stat-hint">{idleSavingsKwh.toFixed(2)} kWh potential saving if the empty-room alert is resolved · estimate, not meter data.</p>
           </div>
 
           {/* Energy waste */}
@@ -826,22 +827,22 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
 
           {/* Appliance states synced from detection */}
           <div className="cv-stat-card">
-            <p className="eyebrow">AUTO APPLIANCE CONTROL</p>
+            <p className="eyebrow">ENERGY SCENARIO</p>
             <div className="cv-appliance-row">
               <Lightbulb size={16} />
               <span>Lights</span>
-              <span className={`cv-pill ${people > 0 ? "cv-pill-on" : "cv-pill-off"}`}>
-                {people > 0 ? "ON" : "OFF"}
+              <span className={`cv-pill ${settings?.lightsOn ? "cv-pill-on" : "cv-pill-off"}`}>
+                {settings?.lightsOn ? "ON" : "OFF"}
               </span>
             </div>
             <div className="cv-appliance-row">
               <Snowflake size={16} />
               <span>AC</span>
-              <span className={`cv-pill ${people > 0 ? "cv-pill-on" : "cv-pill-off"}`}>
-                {people > 0 ? "ON" : "OFF"}
+              <span className={`cv-pill ${settings?.acOn ? "cv-pill-on" : "cv-pill-off"}`}>
+                {settings?.acOn ? "ON" : "OFF"}
               </span>
             </div>
-            <p className="cv-stat-hint">Auto-controlled by AI vision occupancy</p>
+            <p className="cv-stat-hint">Modeled equipment states. The camera reports people; it does not switch physical equipment.</p>
           </div>
 
           {/* Camera FPS */}
@@ -872,7 +873,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
             </div>
           </div>
           <p>
-            Stream from your phone via an IP Camera app (such as <em>IP Webcam</em> on Android or DroidCam). Enter your phone's displayed IP stream address below to connect directly — your laptop webcam will not be opened.
+            You can preview a phone IP stream when your phone and computer share a network. For reliable hosted occupancy updates with YOLO, run the included <code>detect.py</code> on the computer connected to the phone stream; the agent sends counts to the online backend.
           </p>
 
           <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
@@ -905,7 +906,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
           <div className="phone-camera-note">
             <ShieldCheck size={15} />
             <span>
-              Connects directly to the IP stream URL. When the backend is online, OpenCV & YOLOv8 track occupancy and sync to the digital twin.
+              Phone preview depends on local network and browser security. YOLO detections from <code>detect.py</code> update the backend and digital twin.
             </span>
           </div>
 
@@ -971,7 +972,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
       </section>
 
       <p className="footnote">
-        Person detection runs in real-time. Occupancy updates and energy-waste alerts are synced to the backend and reflected across the digital twin and dashboard.
+        Browser vision or the local YOLO agent updates occupancy in the backend. Energy and potential savings are estimates based on modeled equipment loads, not meter readings.
       </p>
     </section>
   );

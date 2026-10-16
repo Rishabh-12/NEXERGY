@@ -9,6 +9,7 @@ import EnergyChat from "./Components/EnergyChat";
 import { FLOORS } from "./Components/campusData";
 import {
   getRoomState,
+  isApiAvailable,
   sendOccupancy,
   runSimulation,
 } from "./services/api";
@@ -106,6 +107,14 @@ export default function App() {
       try {
         const state = await getRoomState();
         if (cancelled) return;
+        if (!isApiAvailable()) {
+          if (lastBackendStatus.current !== "offline") {
+            recordEvent("offline", "Backend connection unavailable", "Showing local controls and estimates until the service responds.", "INTERFACE");
+            lastBackendStatus.current = "offline";
+          }
+          setBackend((b) => ({ ...b, status: "offline", message: "", energyWasteAlert: false }));
+          return;
+        }
         if (lastBackendStatus.current !== "online") {
           recordEvent("connection", "Backend connected", "Room-state polling is receiving responses.", "BACKEND");
           lastBackendStatus.current = "online";
@@ -142,11 +151,15 @@ export default function App() {
         if (!recentlyChanged && observed.acOn !== null && previousRoomState && observed.acOn !== previousRoomState.acOn) {
           setRoomEquipment((current) => ({ ...current, "A-101": { ...current["A-101"], acs: Array(3).fill(observed.acOn) } }));
         }
+        if (!recentlyChanged && observed.lightsOn !== null && previousRoomState && observed.lightsOn !== previousRoomState.lightsOn) {
+          setRoomEquipment((current) => ({ ...current, "A-101": { ...current["A-101"], lights: Array(10).fill(observed.lightsOn) } }));
+        }
         if (!recentlyChanged && Number.isFinite(state.people_count)) {
           const count = clampOccupancy(state.people_count);
           setSettings((s) => {
             const acOn = typeof state.AC === "boolean" ? state.AC : s.acOn;
-            return s.occupancy === count && s.acOn === acOn ? s : { ...s, occupancy: count, acOn };
+            const lightsOn = typeof state.Lights === "boolean" ? state.Lights : s.lightsOn;
+            return s.occupancy === count && s.acOn === acOn && s.lightsOn === lightsOn ? s : { ...s, occupancy: count, acOn, lightsOn };
           });
         }
       } catch {

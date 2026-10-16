@@ -1,10 +1,19 @@
 const DEFAULT_API_URL = "";
+let apiAvailable = false;
+
+export function isApiAvailable() {
+  return apiAvailable;
+}
 
 export function getApiUrl() {
   if (typeof window !== "undefined") {
     const custom = localStorage.getItem("nexenergy_custom_api_url");
     if (custom && custom.trim()) {
-      return custom.trim().replace(/\/$/, "");
+      if (custom.includes("nexenergy-api.onrender.com")) {
+        localStorage.removeItem("nexenergy_custom_api_url");
+      } else {
+        return custom.trim().replace(/\/$/, "");
+      }
     }
   }
   return (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(/\/$/, "");
@@ -20,7 +29,7 @@ export function setCustomApiUrl(url) {
   }
 }
 
-// In-browser mock backend state (matches Backend/main.py exact logic)
+// Local sample state used only when the shared API is unavailable.
 const localBackendState = {
   room_state: {
     AC: true,
@@ -49,21 +58,21 @@ const localBackendState = {
 
 async function request(path, options = {}) {
   const base = getApiUrl();
-  if (base) {
-    try {
-      const response = await fetch(`${base}${path}`, {
-        headers: { "Content-Type": "application/json" },
-        ...options,
-      });
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch {
-      // Fall through to local simulation backend
+  try {
+    const response = await fetch(`${base}${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...options.headers },
+    });
+    if (!response.ok) {
+      throw new Error(`API ${path} returned ${response.status}`);
     }
+    apiAvailable = true;
+    return await response.json();
+  } catch {
+    apiAvailable = false;
+    // Keep sample data available while disconnected, but expose the real link status.
   }
 
-  // Local simulation backend fallback
   return simulateBackendResponse(path, options);
 }
 

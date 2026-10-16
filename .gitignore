@@ -48,3 +48,6 @@ venv/
 .venv/
 .env
 
+# Local YOLO weights and inference artifacts
+*.pt
+runs/
