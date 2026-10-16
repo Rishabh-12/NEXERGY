@@ -12,21 +12,13 @@ from ultralytics import YOLO
 
 # ================= CONFIGURATION =================
 
-# Select: "ip_camera", "webcam", or "video"
-SOURCE_MODE = "ip_camera"
-
 CAMERA_INDEX = 0
-VIDEO_PATH = "classroom_backup.mp4"
-
-# IMPORTANT: Replace this with your actual IP camera stream URL.
-IP_CAMERA_URL = "http://192.168.29.40:8080/video"
 
 MODEL_NAME = "yolov8n.pt"
 CONFIDENCE = 0.35
-PERSON_CLASS_ID = 0
 SMOOTHING_FRAMES = 3
 
-# Use 10 seconds for testing; restore to 300 for a 5-minute alert.
+# Use 10 seconds for testing; use 300 for a 5-minute alert.
 EMPTY_ALERT_SECONDS = 10
 
 # Simulated equipment states. Press L / A to toggle.
@@ -49,28 +41,26 @@ LINE_X_END = 0.90
 CROSS_COOLDOWN_SECONDS = 1.0
 STALE_TRACK_SECONDS = 3.0
 
-# Backend endpoint for live CV synchronization.
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000/update-occupancy")
+# Existing backend endpoint.
+BACKEND_URL = os.getenv(
+    "BACKEND_URL",
+    "http://127.0.0.1:8000/update-occupancy"
+)
 BACKEND_INTERVAL_SECONDS = 2.0
 
-# Compact display panel.
 PANEL_FONT_SCALE = 0.42
 PANEL_LINE_HEIGHT = 19
 PANEL_THICKNESS = 1
 
-WINDOW_NAME = "Smart Campus - IP Camera CV"
+WINDOW_NAME = "Smart Campus - Occupancy Detection"
 
 # ==================================================
 
 
 def detect_people(model, frame, *, persist=False):
-    """Run the shared person-only YOLO pipeline used by the app camera API.
-
-    Restrict inference to the COCO person class so phones and other objects
-    cannot appear in the live vision overlay or affect occupancy counts.
-    """
+    """Run person-only YOLO inference."""
     options = {
-        "classes": [PERSON_CLASS_ID],
+        "classes": [0],
         "conf": CONFIDENCE,
         "imgsz": 640,
         "verbose": False,
@@ -88,44 +78,104 @@ def format_duration(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def open_source():
-    """Open the selected video source."""
-    if SOURCE_MODE == "ip_camera":
-        print("Connecting to IP camera...")
-        source = cv2.VideoCapture(IP_CAMERA_URL, cv2.CAP_FFMPEG)
+def select_video_source():
+    """Ask the user to choose webcam or mobile IP camera."""
+    print("\n========== SMART CAMPUS CAMERA SETUP ==========")
+    print("1. Laptop / USB webcam")
+    print("2. Mobile camera via IP stream")
+
+    choice = input("Choose camera source (1 or 2): ").strip()
+
+    if choice == "1":
+        return "webcam", CAMERA_INDEX
+
+    if choice == "2":
+        url = input(
+            "Enter the full mobile camera stream URL "
+            "(example: http://192.168.1.100:8080/video): "
+        ).strip()
+
+        if not url:
+            raise ValueError("No IP camera URL entered. Exiting.")
+
+        if not url.startswith(("http://", "https://", "rtsp://")):
+            raise ValueError(
+                "Invalid URL format. Use http://, https://, "
+                "or rtsp://. Exiting."
+            )
+
+        return "ip_camera", url
+
+    raise ValueError(
+        "Invalid selection. Run again and enter 1 or 2."
+    )
+
+
+def open_source(source_mode, source_value):
+    """Open the selected camera and verify it returns a frame."""
+
+    if source_mode == "ip_camera":
+        print(f"\nConnecting to mobile IP camera: {source_value}")
+
+        source = cv2.VideoCapture(
+            source_value,
+            cv2.CAP_FFMPEG
+        )
 
         if not source.isOpened():
             source.release()
-            source = cv2.VideoCapture(IP_CAMERA_URL)
+            source = cv2.VideoCapture(source_value)
 
-    elif SOURCE_MODE == "webcam":
-        source = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
+    elif source_mode == "webcam":
+        print("\nConnecting to laptop / USB webcam...")
+
+        source = cv2.VideoCapture(
+            source_value,
+            cv2.CAP_DSHOW
+        )
 
         if not source.isOpened():
             source.release()
-            source = cv2.VideoCapture(CAMERA_INDEX)
-
-    elif SOURCE_MODE == "video":
-        source = cv2.VideoCapture(VIDEO_PATH)
+            source = cv2.VideoCapture(source_value)
 
     else:
-        raise ValueError(
-            "SOURCE_MODE must be ip_camera, webcam, or video"
-        )
+        raise ValueError("Unknown camera source selected.")
 
     if not source.isOpened():
         source.release()
         raise RuntimeError(
-            "Could not open video source. Check the IP stream URL, "
-            "network, camera app, or video file."
+            "Could not open the selected camera. Check the IP URL, "
+            "camera app, Wi-Fi/network, firewall, or webcam connection. "
+            "Exiting."
+        )
+
+    print("Checking that the camera is sending video...")
+
+    first_frame = None
+
+    for _ in range(10):
+        ok, frame = source.read()
+
+        if ok and frame is not None and frame.size > 0:
+            first_frame = frame
+            break
+
+        time.sleep(0.2)
+
+    if first_frame is None:
+        source.release()
+        raise RuntimeError(
+            "Camera opened but no valid video frame was received. "
+            "The URL may be incorrect or the stream unavailable. Exiting."
         )
 
     source.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    return source
+    return source, first_frame
 
 
 def post_payload(payload):
-    """Send a JSON update asynchronously so the camera loop keeps running."""
+    """Send backend data asynchronously."""
+
     def send():
         try:
             request = urllib.request.Request(
@@ -145,14 +195,19 @@ def post_payload(payload):
 
 
 def draw_panel(display, lines, color):
-    """Draw a readable panel sized to fit its contents."""
+    """Draw a readable information panel."""
+
     font = cv2.FONT_HERSHEY_SIMPLEX
     padding = 8
 
     max_width = 0
+
     for text, _ in lines:
         (text_width, _), _ = cv2.getTextSize(
-            text, font, PANEL_FONT_SCALE, PANEL_THICKNESS
+            text,
+            font,
+            PANEL_FONT_SCALE,
+            PANEL_THICKNESS
         )
         max_width = max(max_width, text_width)
 
@@ -160,17 +215,27 @@ def draw_panel(display, lines, color):
     panel_height = len(lines) * PANEL_LINE_HEIGHT + 2 * padding
 
     overlay = display.copy()
+
     cv2.rectangle(
-        overlay, (5, 5), (5 + panel_width, 5 + panel_height),
-        (25, 25, 25), -1
+        overlay,
+        (5, 5),
+        (5 + panel_width, 5 + panel_height),
+        (25, 25, 25),
+        -1
     )
-    cv2.addWeighted(overlay, 0.80, display, 0.20, 0, display)
+
+    cv2.addWeighted(
+        overlay, 0.80, display, 0.20, 0, display
+    )
 
     for index, (text, is_alert) in enumerate(lines):
         cv2.putText(
             display,
             text,
-            (5 + padding, 5 + padding + 10 + index * PANEL_LINE_HEIGHT),
+            (
+                5 + padding,
+                5 + padding + 10 + index * PANEL_LINE_HEIGHT
+            ),
             font,
             PANEL_FONT_SCALE,
             (0, 0, 255) if is_alert else color,
@@ -185,11 +250,20 @@ def main():
     camera = None
 
     try:
+        # Ask for camera choice before loading the AI model.
+        source_mode, source_value = select_video_source()
+
+        # Invalid/unreachable source causes an error and exits.
+        camera, first_frame = open_source(
+            source_mode,
+            source_value
+        )
+
+        print(f"Camera connected successfully: {source_mode}")
         print("Loading YOLOv8 Nano...")
+
         model = YOLO(MODEL_NAME)
 
-        camera = open_source()
-        print(f"Video source connected: {SOURCE_MODE}")
         print("Q/ESC = quit | L = toggle lights | A = toggle AC")
         print("R = reset entry/exit counters")
 
@@ -204,6 +278,7 @@ def main():
         previous_positions = {}
         last_seen = {}
         last_cross = {}
+
         entries = 0
         exits = 0
 
@@ -214,25 +289,24 @@ def main():
 
         last_backend_send = 0.0
         previous_alert = False
-        read_failures = 0
 
-        # Use real elapsed time for occupancy timers even for recorded video.
+        # Process the first frame already read during connection testing.
+        pending_frame = first_frame
+
         while True:
-            ok, frame = camera.read()
+            if pending_frame is not None:
+                frame = pending_frame
+                pending_frame = None
+            else:
+                ok, frame = camera.read()
 
-            if not ok or frame is None:
-                if SOURCE_MODE in ("webcam", "ip_camera"):
-                    read_failures += 1
-                    if read_failures < 30:
-                        time.sleep(0.1)
-                        continue
+                if not ok or frame is None:
+                    print(
+                        "\nCamera stream stopped returning frames. Exiting."
+                    )
+                    break
 
-                print("\nVideo source unavailable or video ended.")
-                break
-
-            read_failures = 0
             now = time.monotonic()
-
             height, width = frame.shape[:2]
 
             zone = np.array(
@@ -247,10 +321,18 @@ def main():
             line_x1 = int(LINE_X_START * width)
             line_x2 = int(LINE_X_END * width)
 
-            # YOLO person detection and ByteTrack tracking.
+            # YOLO person detection and tracking.
             inference_start = time.perf_counter()
 
-            result = detect_people(model, frame, persist=True)
+            result = model.track(
+                frame,
+                persist=True,
+                tracker="bytetrack.yaml",
+                classes=[0],
+                conf=CONFIDENCE,
+                imgsz=640,
+                verbose=False,
+            )[0]
 
             inference_ms = (
                 time.perf_counter() - inference_start
@@ -258,10 +340,11 @@ def main():
 
             display = result.plot()
 
-            # Draw detection zone and crossing line.
+            # Draw detection zone and entry/exit line.
             cv2.polylines(
                 display, [zone], True, (255, 200, 0), 2
             )
+
             cv2.line(
                 display,
                 (line_x1, line_y),
@@ -289,6 +372,7 @@ def main():
             if box_count:
                 coordinates = boxes.xyxy.cpu().numpy()
                 ids = boxes.id
+
                 track_ids = (
                     ids.int().cpu().tolist()
                     if ids is not None
@@ -313,8 +397,13 @@ def main():
 
                 if inside_zone:
                     people_in_zone += 1
+
                     cv2.circle(
-                        display, (foot_x, foot_y), 4, (0, 255, 0), -1
+                        display,
+                        (foot_x, foot_y),
+                        4,
+                        (0, 255, 0),
+                        -1
                     )
 
                 if track_id is None:
@@ -328,8 +417,7 @@ def main():
 
                 previous = previous_positions.get(track_id)
 
-                # Count line crossings only when the foot point crosses
-                # within the configured horizontal segment.
+                # Count crossings of the horizontal line.
                 if (
                     previous is not None
                     and line_x1 <= foot_x <= line_x2
@@ -356,7 +444,8 @@ def main():
 
             # Forget tracks that have disappeared.
             stale_ids = [
-                track_id for track_id, seen_time in last_seen.items()
+                track_id
+                for track_id, seen_time in last_seen.items()
                 if now - seen_time > STALE_TRACK_SECONDS
             ]
 
@@ -365,7 +454,7 @@ def main():
                 previous_positions.pop(track_id, None)
                 last_cross.pop(track_id, None)
 
-            # 1. Smooth occupancy over consecutive frames.
+            # Smooth occupancy over consecutive frames.
             recent_states.append(people_in_zone > 0)
 
             if (
@@ -374,7 +463,7 @@ def main():
             ):
                 confirmed_state = recent_states[0]
 
-            # 2. Empty-room duration.
+            # Track how long the room has been empty.
             if confirmed_state is True:
                 empty_since = None
                 empty_seconds = 0
@@ -394,7 +483,7 @@ def main():
                 else "CHECKING"
             )
 
-            # 3. Potential energy-waste alert.
+            # Potential energy-waste alert.
             waste_alert = (
                 confirmed_state is False
                 and empty_seconds >= EMPTY_ALERT_SECONDS
@@ -403,8 +492,10 @@ def main():
 
             if waste_alert and not previous_alert:
                 equipment = []
+
                 if LIGHTS_ON:
                     equipment.append("Lights")
+
                 if AC_ON:
                     equipment.append("AC")
 
@@ -419,7 +510,7 @@ def main():
 
             previous_alert = waste_alert
 
-            # 4. FPS.
+            # FPS.
             fps_frames += 1
             elapsed = time.perf_counter() - fps_started
 
@@ -428,7 +519,7 @@ def main():
                 fps_frames = 0
                 fps_started = time.perf_counter()
 
-            # 5. Send data to the existing backend periodically.
+            # Send data to the existing backend.
             if (
                 BACKEND_URL
                 and now - last_backend_send >= BACKEND_INTERVAL_SECONDS
@@ -444,7 +535,7 @@ def main():
                     "energy_waste_alert": waste_alert,
                 })
 
-            # 6. Visible information panel.
+            # Information panel.
             color = (
                 (0, 255, 0) if confirmed_state is True
                 else (0, 0, 255) if confirmed_state is False
@@ -452,12 +543,19 @@ def main():
             )
 
             panel_lines = [
+                (f"Source: {source_mode}", False),
                 (f"People in zone: {people_in_zone}", False),
                 (f"Tracked IDs: {tracked_in_zone}", False),
                 (f"Room status: {status}", False),
-                (f"Empty duration: {format_duration(empty_seconds)}", False),
+                (
+                    f"Empty duration: {format_duration(empty_seconds)}",
+                    False
+                ),
                 (f"Entries: {entries} | Exits: {exits}", False),
-                (f"FPS: {fps:.1f} | Inference: {inference_ms:.0f} ms", False),
+                (
+                    f"FPS: {fps:.1f} | Inference: {inference_ms:.0f} ms",
+                    False
+                ),
                 (
                     f"Lights: {'ON' if LIGHTS_ON else 'OFF'} | "
                     f"AC: {'ON' if AC_ON else 'OFF'} (simulated)",
@@ -503,7 +601,8 @@ def main():
             try:
                 if (
                     cv2.getWindowProperty(
-                        WINDOW_NAME, cv2.WND_PROP_VISIBLE
+                        WINDOW_NAME,
+                        cv2.WND_PROP_VISIBLE
                     ) < 1
                 ):
                     break

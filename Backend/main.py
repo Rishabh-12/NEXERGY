@@ -2,14 +2,22 @@ import os
 import csv
 import base64
 import binascii
+import time
+import threading
 from typing import Optional, List
+from dataclasses import dataclass, field
+
 import requests
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from camera import camera_state, start_camera, stop_camera, mjpeg_generator, process_mobile_frame, expire_mobile_camera
+
+try:
+    import cv2
+except Exception:
+    cv2 = None
 
 try:
     from dotenv import load_dotenv
@@ -19,7 +27,360 @@ except ImportError:
 
 app = FastAPI(title="NexEnergy API - Smart Campus Energy Optimizer")
 
+# ───────────────────────────────────────────────────────────────────
+# Camera state & detection helpers (previously in camera.py)
+# Uses the same YOLO person-detection approach as detect.py
+# ───────────────────────────────────────────────────────────────────
+
+PERSON_CLASS_ID = 0
+CONFIDENCE = 0.35
+EMPTY_THRESHOLD_SECONDS = 3
+
+
+@dataclass
+class CameraState:
+    active: bool = False
+    people_count: int = 0
+    status: str = "Inactive"          # "Occupied" | "Empty" | "Inactive"
+    energy_waste_alert: bool = False
+    empty_seconds: int = 0
+    fps: float = 0.0
+    error: str = ""
+    source: str = "none"            # "laptop" | "mobile" | "ip_camera" | "none"
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "active": self.active,
+                "people_count": self.people_count,
+                "status": self.status,
+                "energy_waste_alert": self.energy_waste_alert,
+                "empty_seconds": self.empty_seconds,
+                "fps": round(self.fps, 1),
+                "error": self.error,
+                "source": self.source,
+            }
+
+
+camera_state = CameraState()
+
+# Globals for the background camera thread
+_latest_frame: bytes = b""
+_frame_lock = threading.Lock()
+_thread: threading.Thread | None = None
+_stop_event = threading.Event()
+
+# Mobile camera globals
+_mobile_model = None
+_mobile_model_lock = threading.Lock()
+_mobile_inference_lock = threading.Lock()
+_mobile_empty_start: float | None = None
+_mobile_last_frame_at: float | None = None
+
+
+def _detect_people(model, frame, *, persist=False):
+    """Run person-only YOLO inference (mirrors detect.py's approach)."""
+    options = {
+        "classes": [PERSON_CLASS_ID],
+        "conf": CONFIDENCE,
+        "imgsz": 640,
+        "verbose": False,
+    }
+    if persist:
+        options.update(persist=True, tracker="bytetrack.yaml")
+        return model.track(frame, **options)[0]
+    return model.predict(frame, **options)[0]
+
+
+def _mark_camera_inactive(error: str = "") -> None:
+    """Clear stale camera telemetry."""
+    global _latest_frame
+    with camera_state._lock:
+        camera_state.active = False
+        camera_state.people_count = 0
+        camera_state.status = "Inactive"
+        camera_state.energy_waste_alert = False
+        camera_state.empty_seconds = 0
+        camera_state.fps = 0.0
+        camera_state.error = error
+        camera_state.source = "none"
+    with _frame_lock:
+        _latest_frame = b""
+
+
+def expire_mobile_camera() -> None:
+    """Mark a lost browser stream offline if no frames arrive for a while."""
+    global _mobile_empty_start, _mobile_last_frame_at
+    with camera_state._lock:
+        is_stale = (
+            camera_state.active
+            and camera_state.source == "mobile"
+            and _mobile_last_frame_at is not None
+            and time.monotonic() - _mobile_last_frame_at > 8
+        )
+    if is_stale:
+        with _mobile_inference_lock:
+            with camera_state._lock:
+                still_stale = (
+                    camera_state.active
+                    and camera_state.source == "mobile"
+                    and _mobile_last_frame_at is not None
+                    and time.monotonic() - _mobile_last_frame_at > 8
+                )
+            if still_stale:
+                _mobile_empty_start = None
+                _mobile_last_frame_at = None
+                _mark_camera_inactive("No frames received for 8 seconds. Reconnect the browser camera.")
+
+
+def process_mobile_frame(frame_bytes: bytes) -> dict:
+    """Run one JPEG frame uploaded by a phone browser through YOLO."""
+    global cv2, _mobile_model, _mobile_empty_start, _mobile_last_frame_at, _latest_frame
+    if len(frame_bytes) > 2_000_000:
+        raise ValueError("Frame is too large. Send a JPEG under 2 MB.")
+
+    if cv2 is None:
+        try:
+            import cv2
+        except Exception as exc:
+            raise RuntimeError("OpenCV could not load on the backend.") from exc
+
+    try:
+        import numpy as np
+        image = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    except Exception as exc:
+        raise ValueError("The uploaded image could not be decoded.") from exc
+    if image is None:
+        raise ValueError("The uploaded image is not a valid JPEG frame.")
+
+    try:
+        with _mobile_inference_lock:
+            with _mobile_model_lock:
+                if _mobile_model is None:
+                    try:
+                        from ultralytics import YOLO
+                    except ImportError as exc:
+                        raise RuntimeError("Ultralytics is not installed on the backend.") from exc
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    model_path = os.path.join(script_dir, "yolov8n.pt")
+                    if not os.path.exists(model_path):
+                        raise RuntimeError("YOLO model Backend/yolov8n.pt is missing.")
+                    _mobile_model = YOLO(model_path)
+                model = _mobile_model
+
+            results = _detect_people(model, image)
+            people = len(results.boxes) if results.boxes is not None else 0
+            now = time.monotonic()
+            if people == 0:
+                if _mobile_empty_start is None:
+                    _mobile_empty_start = now
+                elapsed = int(now - _mobile_empty_start)
+                waste_alert = elapsed >= EMPTY_THRESHOLD_SECONDS
+            else:
+                _mobile_empty_start = None
+                elapsed = 0
+                waste_alert = False
+
+            annotated = results.plot()
+            ok, buffer = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if not ok:
+                raise RuntimeError("Could not encode the annotated camera frame.")
+            with _frame_lock:
+                _latest_frame = buffer.tobytes()
+            fps = 1 / (now - _mobile_last_frame_at) if _mobile_last_frame_at is not None and now > _mobile_last_frame_at else 0.0
+            _mobile_last_frame_at = now
+            with camera_state._lock:
+                camera_state.active = True
+                camera_state.source = "mobile"
+                camera_state.people_count = people
+                camera_state.status = "Occupied" if people > 0 else "Empty"
+                camera_state.energy_waste_alert = waste_alert
+                camera_state.empty_seconds = elapsed
+                camera_state.fps = fps
+                camera_state.error = ""
+    except Exception as exc:
+        _mark_camera_inactive(f"Person detection failed: {exc}")
+        raise RuntimeError(f"Person detection failed: {exc}") from exc
+
+    return {
+        "message": "Mobile camera frame processed.",
+        "source": "mobile",
+        "people_count": people,
+        "status": "Occupied" if people > 0 else "Empty",
+        "energy_waste_alert": waste_alert,
+        "empty_seconds": elapsed,
+        "fps": round(fps, 1),
+    }
+
+
+def _detection_loop(source=0) -> None:
+    """Capture frames, run YOLO, update shared state, encode JPEG."""
+    global _latest_frame, cv2
+
+    if cv2 is None:
+        try:
+            import cv2
+        except Exception:
+            _mark_camera_inactive("OpenCV is not installed.")
+            return
+
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        _mark_camera_inactive("Ultralytics is not installed.")
+        return
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(script_dir, "yolov8n.pt")
+    if not os.path.exists(model_path):
+        model_path = "yolov8n.pt"
+
+    try:
+        model = YOLO(model_path)
+    except Exception as exc:
+        _mark_camera_inactive(f"Model load failed: {exc}")
+        return
+
+    is_ip = isinstance(source, str) and any(source.lower().startswith(p) for p in ("http://", "https://", "rtsp://"))
+    if is_ip:
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            cap.release()
+            cap = cv2.VideoCapture(source)
+    else:
+        cam_idx = 0
+        try:
+            cam_idx = int(source)
+        except (ValueError, TypeError):
+            cam_idx = 0
+        cap = cv2.VideoCapture(cam_idx)
+
+    if not cap.isOpened():
+        _mark_camera_inactive(f"Cannot open camera source: {source}")
+        return
+
+    with camera_state._lock:
+        camera_state.active = True
+        camera_state.source = "ip_camera" if is_ip else "laptop"
+        camera_state.error = ""
+    empty_start: float | None = None
+    prev_time = time.time()
+
+    while not _stop_event.is_set():
+        ret, frame = cap.read()
+        if not ret:
+            _mark_camera_inactive("Failed to read a frame from the camera.")
+            break
+
+        try:
+            result = _detect_people(model, frame, persist=True)
+        except Exception as exc:
+            _mark_camera_inactive(f"Person detection failed: {exc}")
+            break
+        people = len(result.boxes) if result.boxes is not None else 0
+
+        if people == 0:
+            if empty_start is None:
+                empty_start = time.time()
+            elapsed = int(time.time() - empty_start)
+            waste_alert = elapsed >= EMPTY_THRESHOLD_SECONDS
+        else:
+            empty_start = None
+            elapsed = 0
+            waste_alert = False
+
+        now = time.time()
+        dt = now - prev_time
+        fps = 1.0 / dt if dt > 0 else 0
+        prev_time = now
+
+        with camera_state._lock:
+            camera_state.people_count = people
+            camera_state.status = "Occupied" if people > 0 else "Empty"
+            camera_state.energy_waste_alert = waste_alert
+            camera_state.empty_seconds = elapsed
+            camera_state.fps = fps
+
+        annotated = result.plot()
+        h, w = annotated.shape[:2]
+
+        cv2.putText(annotated, f"People: {people}", (20, 45),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 255, 0), 2)
+
+        if waste_alert:
+            overlay = annotated.copy()
+            cv2.rectangle(overlay, (0, 0), (w, 70), (0, 0, 180), -1)
+            annotated = cv2.addWeighted(overlay, 0.45, annotated, 0.55, 0)
+            cv2.putText(annotated, "ENERGY WASTE ALERT", (20, 48),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
+
+        cv2.putText(annotated, f"{fps:.0f} FPS", (w - 130, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+
+        bar_color = (0, 180, 0) if people > 0 else ((0, 0, 220) if waste_alert else (80, 80, 80))
+        cv2.rectangle(annotated, (0, h - 36), (w, h), bar_color, -1)
+        status_text = f"  NexEnergy AI Vision  |  {camera_state.status}  |  {people} detected  |  Empty {elapsed}s"
+        cv2.putText(annotated, status_text, (10, h - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+
+        ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        if ok:
+            with _frame_lock:
+                _latest_frame = buf.tobytes()
+
+    cap.release()
+    with camera_state._lock:
+        camera_state.active = False
+        camera_state.source = "none"
+
+
+def start_camera(source=0) -> dict:
+    """Launch the detection thread (idempotent)."""
+    global _thread
+    if camera_state.active and camera_state.source == "mobile":
+        return {"message": "A mobile camera is already connected."}
+    if _thread is not None and _thread.is_alive():
+        return {"message": "Camera already running"}
+    _stop_event.clear()
+    _thread = threading.Thread(target=_detection_loop, args=(source,), daemon=True)
+    _thread.start()
+    time.sleep(0.8)
+    if camera_state.error:
+        return {"message": f"Camera failed: {camera_state.error}"}
+    return {"message": f"Camera started ({camera_state.source})"}
+
+
+def stop_camera() -> dict:
+    """Signal the detection thread to stop."""
+    _stop_event.set()
+    if _thread is not None:
+        _thread.join(timeout=3)
+    global _mobile_empty_start, _mobile_last_frame_at
+    with _mobile_inference_lock:
+        _mobile_empty_start = None
+        _mobile_last_frame_at = None
+        _mark_camera_inactive()
+    return {"message": "Camera stopped"}
+
+
+def mjpeg_generator():
+    """Yield multipart MJPEG frames for StreamingResponse."""
+    while camera_state.active:
+        with _frame_lock:
+            frame = _latest_frame
+        if frame:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+            )
+        time.sleep(0.04)  # ~25 fps cap
+
+
+# ───────────────────────────────────────────────────────────────────
 # Gemini AI configuration via environment variable (.env)
+# ───────────────────────────────────────────────────────────────────
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 def call_gemini(prompt: str) -> Optional[dict]:
@@ -150,9 +511,13 @@ def home():
 def get_room_state():
     return room_state
 
+_last_occupancy_update: float = 0.0
+
 # 1. Computer Vision & Manual Occupancy Integration
 @app.post("/update-occupancy")
 def update_occupancy(data: OccupancyData):
+    global _last_occupancy_update
+    _last_occupancy_update = time.time()
     # Safely extract count from either people_count or occupancy_count
     count = data.occupancy_count if data.occupancy_count is not None else data.people_count
     people = max(0, count if count is not None else 0)
@@ -170,6 +535,16 @@ def update_occupancy(data: OccupancyData):
         room_state["AC"] = True
         room_state["Ceiling Fan"] = True
         message = f"{people} people detected. Simulated AC and fan switched ON."
+
+    # Keep camera_state in sync with detect.py or external CV
+    if not camera_state.active or camera_state.source in ("detect.py", "external_cv", "none"):
+        with camera_state._lock:
+            camera_state.active = True
+            camera_state.source = "detect.py"
+            camera_state.people_count = people
+            camera_state.status = data.status or ("Occupied" if people > 0 else "Empty")
+            camera_state.energy_waste_alert = bool(data.energy_waste_alert)
+            camera_state.empty_seconds = data.empty_seconds or 0
 
     return {
         "message": message,
@@ -487,6 +862,13 @@ def api_stop_camera():
 def api_camera_status():
     """Return current camera detection state (people count, alerts, FPS, etc.)."""
     expire_mobile_camera()
+    # If detect.py hasn't sent updates in over 6 seconds and camera thread isn't running, mark inactive
+    if camera_state.source == "detect.py" and time.time() - _last_occupancy_update > 6.0:
+        with camera_state._lock:
+            camera_state.active = False
+            camera_state.status = "Inactive"
+            camera_state.source = "none"
+
     snap = camera_state.snapshot()
     # Also sync the live detection into room_state so the rest of the app
     # picks it up automatically via /room-state polling.

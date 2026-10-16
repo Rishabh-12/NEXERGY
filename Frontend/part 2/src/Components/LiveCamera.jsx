@@ -115,8 +115,9 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
   const lastBackendPostRef = useRef(0);
   const emptyStartRef = useRef(null);
   const frameCountRef = useRef(0);
-  const fpsTimerRef = useRef(performance.now());
+  const fpsTimerRef = useRef(0);
   const isDetectingRef = useRef(false);
+  const runDetectionRef = useRef(null);
 
   // Attach webcam stream to <video> element
   useEffect(() => {
@@ -245,6 +246,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
 
           // Calculate visual FPS
           frameCountRef.current++;
+          if (!fpsTimerRef.current) fpsTimerRef.current = now;
           const elapsedFps = (now - fpsTimerRef.current) / 1000;
           if (elapsedFps >= 1.0) {
             setLiveFps(Math.round((frameCountRef.current / elapsedFps) * 10) / 10);
@@ -286,9 +288,15 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
     }
 
     if (isDetectingRef.current) {
-      animFrameRef.current = requestAnimationFrame(runDetection);
+      animFrameRef.current = requestAnimationFrame(() => {
+        runDetectionRef.current?.();
+      });
     }
   }, [backend?.status, settings?.lightsOn, settings?.acOn]);
+
+  useEffect(() => {
+    runDetectionRef.current = runDetection;
+  }, [runDetection]);
 
   // Start the live camera (Webcam with in-browser AI detection & backend sync)
   async function handleStart() {
@@ -312,7 +320,9 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
         setWebcamStream(stream);
         setWebcamActive(true);
         isDetectingRef.current = true;
-        animFrameRef.current = requestAnimationFrame(runDetection);
+        animFrameRef.current = requestAnimationFrame(() => {
+          runDetectionRef.current?.();
+        });
       }
     } catch (error) {
       const reason = !window.isSecureContext
@@ -412,7 +422,7 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
       }
       setPhoneStreamUrl(url);
       setPhoneConnected(true);
-    } catch (err) {
+    } catch {
       // Even if backend is not yet online, preview the stream directly
       setPhoneStreamUrl(url);
       setPhoneConnected(true);
@@ -627,28 +637,64 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
               <p className="eyebrow">LIVE VISION STREAM</p>
               <h2 style={{ marginTop: 4 }}>Room A-101 Camera</h2>
             </div>
-            <div className="cv-feed-controls">
-              {!cameraConnected ? (
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "inline-flex", background: "var(--paper, #f1f5f9)", padding: "2px", borderRadius: "6px", border: "1px solid var(--line, #e2e8f0)" }}>
                 <button
                   type="button"
-                  className="cv-btn cv-btn-start"
-                  disabled={loading}
-                  onClick={handleStart}
+                  style={{
+                    padding: "4px 9px",
+                    fontSize: "11px",
+                    fontWeight: "600",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    background: streamMode === "webcam" ? "var(--ink, #0f172a)" : "transparent",
+                    color: streamMode === "webcam" ? "#ffffff" : "var(--ink, #475569)",
+                  }}
+                  onClick={() => setStreamMode("webcam")}
                 >
-                  <Camera size={16} />
-                  {loading ? "Starting Camera…" : "Start Camera"}
+                  Browser Camera
                 </button>
-              ) : (
                 <button
                   type="button"
-                  className="cv-btn cv-btn-stop"
-                  disabled={loading}
-                  onClick={handleStop}
+                  style={{
+                    padding: "4px 9px",
+                    fontSize: "11px",
+                    fontWeight: "600",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    background: streamMode === "backend" ? "var(--ink, #0f172a)" : "transparent",
+                    color: streamMode === "backend" ? "#ffffff" : "var(--ink, #475569)",
+                  }}
+                  onClick={() => setStreamMode("backend")}
                 >
-                  <CameraOff size={16} />
-                  {loading ? "Stopping…" : "Stop Camera"}
+                  Python detect.py
                 </button>
-              )}
+              </div>
+              <div className="cv-feed-controls">
+                {!cameraConnected ? (
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-start"
+                    disabled={loading}
+                    onClick={handleStart}
+                  >
+                    <Camera size={16} />
+                    {loading ? "Starting Camera…" : streamMode === "webcam" ? "Start Camera" : "Connect Feed"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-stop"
+                    disabled={loading}
+                    onClick={handleStop}
+                  >
+                    <CameraOff size={16} />
+                    {loading ? "Stopping…" : "Stop Camera"}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -659,6 +705,30 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
                 alt="Live camera feed from backend"
                 className="cv-feed-img"
               />
+            ) : cam?.active && cam?.source === "detect.py" ? (
+              <div style={{ padding: "48px 24px", textAlign: "center", background: "rgba(34, 197, 94, 0.04)", borderRadius: "8px" }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", color: "#16a34a", fontWeight: "700", fontSize: "16px", marginBottom: "8px" }}>
+                  <Radio size={20} className="cv-pulse" />
+                  detect.py Live (Python YOLOv8)
+                </div>
+                <p style={{ margin: "4px 0 18px", color: "var(--ink-muted, #64748b)", fontSize: "13px" }}>
+                  Receiving real-time computer vision occupancy stream from <code>Backend/detect.py</code>.
+                </p>
+                <div style={{ display: "flex", justifyContent: "center", gap: "16px", flexWrap: "wrap" }}>
+                  <div style={{ background: "var(--paper, #fff)", padding: "10px 18px", borderRadius: "8px", border: "1px solid var(--line, #e2e8f0)", minWidth: "110px" }}>
+                    <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "600" }}>Occupancy</div>
+                    <div style={{ fontSize: "22px", fontWeight: "700", color: people > 0 ? "#16a34a" : "#64748b", marginTop: "2px" }}>{people} {people === 1 ? "Person" : "People"}</div>
+                  </div>
+                  <div style={{ background: "var(--paper, #fff)", padding: "10px 18px", borderRadius: "8px", border: "1px solid var(--line, #e2e8f0)", minWidth: "110px" }}>
+                    <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "600" }}>Room Status</div>
+                    <div style={{ fontSize: "22px", fontWeight: "700", color: status === "Occupied" ? "#16a34a" : "#f59e0b", marginTop: "2px" }}>{status}</div>
+                  </div>
+                  <div style={{ background: "var(--paper, #fff)", padding: "10px 18px", borderRadius: "8px", border: "1px solid var(--line, #e2e8f0)", minWidth: "110px" }}>
+                    <div style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: "600" }}>Energy Waste</div>
+                    <div style={{ fontSize: "22px", fontWeight: "700", color: waste ? "#ef4444" : "#16a34a", marginTop: "2px" }}>{waste ? "Alert Active" : "None"}</div>
+                  </div>
+                </div>
+              </div>
             ) : isWebcamLive ? (
               <div style={{ position: "relative", width: "100%", height: "100%" }}>
                 <video
@@ -687,8 +757,11 @@ export default function LiveCamera({ backend, settings, energyEstimate, costEsti
                 <Camera size={64} strokeWidth={1} />
                 <h3>Camera Offline</h3>
                 <p>
-                  {webcamError || "Click 'Start Camera' to begin real-time AI person detection and sync occupancy with the backend."}
+                  {webcamError || "Click 'Start Camera' to begin in-browser AI person detection, or run 'python Backend/detect.py' to use local YOLOv8 with Webcam or Mobile IP Camera."}
                 </p>
+                <div style={{ marginTop: "14px", display: "inline-block", background: "var(--paper, #f1f5f9)", padding: "6px 12px", borderRadius: "4px", fontSize: "11px", border: "1px solid var(--line, #e2e8f0)" }}>
+                  <code>python Backend/detect.py</code> &bull; Option 1: Laptop Webcam | Option 2: Mobile IP Camera
+                </div>
               </div>
             )}
 

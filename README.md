@@ -164,8 +164,7 @@ Full request and response schemas are available at `/docs` when the API is runni
 │   └── workflows/deploy-pages.yml  # Frontend checks and GitHub Pages deployment
 ├── Backend/
 │   ├── main.py                     # FastAPI routes, estimates, and recommendations
-│   ├── camera.py                   # Camera/API integration
-│   ├── detect.py                   # Person-only YOLO inference
+│   ├── detect.py                   # Person-only YOLO inference (Webcam & IP camera)
 │   ├── yolov8n.pt                  # YOLOv8 nano model weights
 │   ├── historical_data.csv         # Example historical data
 │   └── requirements.txt            # Python dependencies
